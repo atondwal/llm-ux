@@ -21,6 +21,9 @@ export default function App({ navigation }: { navigation?: any }) {
   // Sidebar state
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [allConversations, setAllConversations] = useState<any[]>([]);
+  const [editingConvId, setEditingConvId] = useState<string | null>(null);
+  const [editingConvTitle, setEditingConvTitle] = useState('');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
   // Debug: Track editingMessageId changes
   useEffect(() => {
     console.log("🎯 editingMessageId changed to:", editingMessageId);
@@ -485,6 +488,67 @@ export default function App({ navigation }: { navigation?: any }) {
   };
 
   // Handle double-click detection
+  const startEditingConversation = (conv: any) => {
+    setEditingConvId(conv.id);
+    setEditingConvTitle(conv.title);
+  };
+
+  const saveConversationTitle = async (convId: string) => {
+    if (!editingConvTitle.trim()) {
+      setEditingConvId(null);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/v1/conversations/${convId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: editingConvTitle })
+      });
+
+      if (response.ok) {
+        const updated = await response.json();
+        setAllConversations(prev => 
+          prev.map(c => c.id === convId ? { ...c, title: updated.title } : c)
+        );
+        if (currentConversation?.id === convId) {
+          setCurrentConversation(prev => ({ ...prev, title: updated.title }));
+        }
+      }
+    } catch (error) {
+      console.error('Failed to update conversation title:', error);
+    }
+    
+    setEditingConvId(null);
+  };
+
+  const deleteConversation = async (convId: string) => {
+    try {
+      const response = await fetch(`${API_URL}/v1/conversations/${convId}`, {
+        method: 'DELETE'
+      });
+
+      if (response.ok) {
+        // Remove from list
+        const updatedConvs = allConversations.filter(c => c.id !== convId);
+        setAllConversations(updatedConvs);
+        
+        // If deleting current conversation, switch to another or create new
+        if (currentConversation?.id === convId) {
+          if (updatedConvs.length > 0) {
+            selectConversation(updatedConvs[0]);
+          } else {
+            createNewConversation();
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to delete conversation:', error);
+    }
+    
+    setShowDeleteConfirm(null);
+  };
+
   const handleDoubleClick = (messageId: string, messageContent: string) => {
     const now = Date.now();
     const lastClick = lastClickTime[messageId] || 0;
@@ -525,21 +589,84 @@ export default function App({ navigation }: { navigation?: any }) {
         
         <ScrollView style={styles.convList}>
           {allConversations.map(conv => (
-            <TouchableOpacity
-              key={conv.id}
-              style={[
-                styles.convItem,
-                conv.id === currentConversation?.id && styles.convItemActive
-              ]}
-              onPress={() => selectConversation(conv)}
-            >
-              <Text style={styles.convIcon}>
-                {conv.type === 'wiki' ? '📚' : '💬'}
-              </Text>
-              <Text style={styles.convTitle} numberOfLines={1}>
-                {conv.title}
-              </Text>
-            </TouchableOpacity>
+            <View key={conv.id} style={[
+              styles.convItem,
+              conv.id === currentConversation?.id && styles.convItemActive
+            ]}>
+              {editingConvId === conv.id ? (
+                // Edit mode
+                <View style={styles.convEditContainer}>
+                  <TextInput
+                    style={styles.convEditInput}
+                    value={editingConvTitle}
+                    onChangeText={setEditingConvTitle}
+                    onBlur={() => saveConversationTitle(conv.id)}
+                    onSubmitEditing={() => saveConversationTitle(conv.id)}
+                    autoFocus
+                    selectTextOnFocus
+                  />
+                  <TouchableOpacity
+                    style={styles.convEditButton}
+                    onPress={() => saveConversationTitle(conv.id)}
+                  >
+                    <Text style={styles.convEditButtonText}>✓</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.convEditButton}
+                    onPress={() => setEditingConvId(null)}
+                  >
+                    <Text style={styles.convEditButtonText}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : showDeleteConfirm === conv.id ? (
+                // Delete confirmation
+                <View style={styles.convDeleteConfirm}>
+                  <Text style={styles.convDeleteText}>Delete?</Text>
+                  <TouchableOpacity
+                    style={styles.convDeleteYes}
+                    onPress={() => deleteConversation(conv.id)}
+                  >
+                    <Text style={styles.convDeleteYesText}>Yes</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.convDeleteNo}
+                    onPress={() => setShowDeleteConfirm(null)}
+                  >
+                    <Text style={styles.convDeleteNoText}>No</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                // Normal mode
+                <TouchableOpacity
+                  style={styles.convContent}
+                  onPress={() => selectConversation(conv)}
+                  onLongPress={() => startEditingConversation(conv)}
+                >
+                  <Text style={styles.convIcon}>
+                    {conv.type === 'wiki' ? '📚' : '💬'}
+                  </Text>
+                  <Text style={styles.convTitle} numberOfLines={1}>
+                    {conv.title}
+                  </Text>
+                </TouchableOpacity>
+              )}
+              {editingConvId !== conv.id && showDeleteConfirm !== conv.id && (
+                <View style={styles.convActions}>
+                  <TouchableOpacity
+                    style={styles.convActionButton}
+                    onPress={() => startEditingConversation(conv)}
+                  >
+                    <Text style={styles.convActionText}>✏️</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.convActionButton}
+                    onPress={() => setShowDeleteConfirm(conv.id)}
+                  >
+                    <Text style={styles.convActionText}>🗑️</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
           ))}
         </ScrollView>
       </View>
@@ -922,12 +1049,17 @@ const styles = StyleSheet.create({
   convItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#e0e0e0',
   },
   convItemActive: {
     backgroundColor: '#e3f2fd',
+  },
+  convContent: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
   },
   convIcon: {
     fontSize: 16,
@@ -936,6 +1068,74 @@ const styles = StyleSheet.create({
   convTitle: {
     flex: 1,
     fontSize: 14,
+  },
+  convActions: {
+    flexDirection: 'row',
+    paddingRight: 8,
+  },
+  convActionButton: {
+    padding: 4,
+    marginLeft: 4,
+  },
+  convActionText: {
+    fontSize: 14,
+  },
+  convEditContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 8,
+  },
+  convEditInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#007AFF',
+    borderRadius: 4,
+    padding: 6,
+    fontSize: 14,
+    backgroundColor: 'white',
+  },
+  convEditButton: {
+    padding: 6,
+    marginLeft: 4,
+  },
+  convEditButtonText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  convDeleteConfirm: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 12,
+    backgroundColor: '#fff3cd',
+  },
+  convDeleteText: {
+    fontSize: 14,
+    color: '#856404',
+  },
+  convDeleteYes: {
+    backgroundColor: '#dc3545',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  convDeleteYesText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  convDeleteNo: {
+    backgroundColor: '#6c757d',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  convDeleteNoText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: 'bold',
   },
   mainContent: {
     flex: 1,

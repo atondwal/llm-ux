@@ -109,6 +109,42 @@ class ConversationRepository:
             created_at=db_conv.created_at.isoformat() if db_conv.created_at else None
         )
     
+    async def update(self, conversation_id: str, update_data: Dict[str, Any]) -> Optional[Conversation]:
+        """Update a conversation's details."""
+        result = await self.session.execute(
+            select(ConversationDB).where(ConversationDB.id == conversation_id)
+        )
+        db_conv = result.scalar_one_or_none()
+        
+        if not db_conv:
+            return None
+        
+        # Update allowed fields
+        if 'title' in update_data:
+            db_conv.title = update_data['title']
+        if 'type' in update_data:
+            db_conv.type = update_data['type']
+        
+        await self.session.commit()
+        
+        # Return updated conversation
+        return await self.get(conversation_id)
+    
+    async def delete(self, conversation_id: str) -> bool:
+        """Delete a conversation and all related data."""
+        result = await self.session.execute(
+            select(ConversationDB).where(ConversationDB.id == conversation_id)
+        )
+        db_conv = result.scalar_one_or_none()
+        
+        if not db_conv:
+            return False
+        
+        # Delete conversation (cascades to messages, participants, leaves, etc.)
+        await self.session.delete(db_conv)
+        await self.session.commit()
+        return True
+    
     async def list_all(self) -> List[Conversation]:
         """List all conversations."""
         result = await self.session.execute(

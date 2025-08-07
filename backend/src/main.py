@@ -189,6 +189,31 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Conversation not found")
         return conversation
     
+    @app.patch("/v1/conversations/{conversation_id}")
+    async def update_conversation(
+        conversation_id: str, 
+        update_data: Dict[str, Any],
+        db: AsyncSession = Depends(get_db)
+    ) -> Conversation:
+        """Update conversation details (e.g., title)."""
+        repo = ConversationRepository(db)
+        conversation = await repo.update(conversation_id, update_data)
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        return conversation
+    
+    @app.delete("/v1/conversations/{conversation_id}")
+    async def delete_conversation(
+        conversation_id: str,
+        db: AsyncSession = Depends(get_db)
+    ) -> Dict[str, str]:
+        """Delete a conversation and all its messages."""
+        repo = ConversationRepository(db)
+        success = await repo.delete(conversation_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        return {"message": "Conversation deleted successfully"}
+    
     @app.get("/v1/conversations/{conversation_id}/messages")
     async def get_messages(conversation_id: str, leaf_id: Optional[str] = None, db: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
         """Get all messages from a conversation, optionally filtered by leaf."""
