@@ -1,9 +1,19 @@
+// Switch between mock and live versions
+const USE_LIVE_BACKEND = true;
+
 import { StatusBar } from 'expo-status-bar';
 import { StyleSheet, View } from 'react-native';
 import ChatInterface from './src/components/ChatInterface';
 import { Conversation } from './src/types';
+import AppLive from './AppLive';
 
 export default function App() {
+  // Use live backend if enabled
+  if (USE_LIVE_BACKEND) {
+    return <AppLive />;
+  }
+
+  // Otherwise use mock data
   const mockConversation: Conversation = {
     id: 'demo-1',
     type: 'chat',

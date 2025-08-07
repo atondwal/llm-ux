@@ -140,6 +140,127 @@ class TestConversationAPI:
         assert "created_at" in message
 
     @pytest.mark.asyncio
+    async def test_update_message_in_conversation(self, client: AsyncClient) -> None:
+        """Updating a message should modify its content and broadcast to WebSocket clients."""
+        # Arrange - create conversation and message first
+        create_response = await client.post(
+            "/v1/conversations",
+            json={
+                "title": "Update Test",
+                "type": "chat", 
+                "participants": [
+                    {"id": str(uuid.uuid4()), "type": "human", "name": "Alice"}
+                ],
+            },
+        )
+        conversation_id = create_response.json()["id"]
+        participant_id = create_response.json()["participants"][0]["id"]
+
+        message_response = await client.post(
+            f"/v1/conversations/{conversation_id}/messages",
+            json={"content": "Original content", "author_id": participant_id}
+        )
+        message_id = message_response.json()["id"]
+
+        # Act - update the message
+        update_data = {"content": "Updated content"}
+        response = await client.put(
+            f"/v1/conversations/{conversation_id}/messages/{message_id}",
+            json=update_data
+        )
+
+        # Assert
+        assert response.status_code == 200
+        updated_message = response.json()
+        assert updated_message["content"] == "Updated content"
+        assert updated_message["id"] == message_id
+        assert updated_message["author_id"] == participant_id
+
+        # Verify message was updated in conversation
+        conversation_response = await client.get(f"/v1/conversations/{conversation_id}")
+        conversation = conversation_response.json()
+        assert len(conversation["messages"]) == 1
+        assert conversation["messages"][0]["content"] == "Updated content"
+
+    @pytest.mark.asyncio
+    async def test_update_message_nonexistent_conversation_returns_404(self, client: AsyncClient) -> None:
+        """Updating a message in non-existent conversation should return 404."""
+        fake_conv_id = str(uuid.uuid4())
+        fake_msg_id = str(uuid.uuid4())
+
+        response = await client.put(
+            f"/v1/conversations/{fake_conv_id}/messages/{fake_msg_id}",
+            json={"content": "New content"}
+        )
+
+        assert response.status_code == 404
+        error = response.json()
+        assert "not found" in error["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_update_nonexistent_message_returns_404(self, client: AsyncClient) -> None:
+        """Updating a non-existent message should return 404."""
+        # Arrange - create conversation first
+        create_response = await client.post(
+            "/v1/conversations",
+            json={
+                "title": "Test",
+                "type": "chat",
+                "participants": [
+                    {"id": str(uuid.uuid4()), "type": "human", "name": "Bob"}
+                ],
+            },
+        )
+        conversation_id = create_response.json()["id"]
+        fake_msg_id = str(uuid.uuid4())
+
+        # Act
+        response = await client.put(
+            f"/v1/conversations/{conversation_id}/messages/{fake_msg_id}",
+            json={"content": "New content"}
+        )
+
+        # Assert
+        assert response.status_code == 404
+        error = response.json()
+        assert "not found" in error["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_update_message_without_content_field(self, client: AsyncClient) -> None:
+        """Updating a message without content field should not change content."""
+        # Arrange - create conversation and message first
+        create_response = await client.post(
+            "/v1/conversations",
+            json={
+                "title": "No Content Test",
+                "type": "chat",
+                "participants": [
+                    {"id": str(uuid.uuid4()), "type": "human", "name": "Charlie"}
+                ],
+            },
+        )
+        conversation_id = create_response.json()["id"]
+        participant_id = create_response.json()["participants"][0]["id"]
+
+        message_response = await client.post(
+            f"/v1/conversations/{conversation_id}/messages",
+            json={"content": "Original content", "author_id": participant_id}
+        )
+        message_id = message_response.json()["id"]
+
+        # Act - update without content field
+        response = await client.put(
+            f"/v1/conversations/{conversation_id}/messages/{message_id}",
+            json={"other_field": "ignored"}  # No 'content' field
+        )
+
+        # Assert
+        assert response.status_code == 200
+        updated_message = response.json()
+        assert updated_message["content"] == "Original content"  # Should remain unchanged
+        assert updated_message["id"] == message_id
+
+    @pytest.mark.asyncio
     async def test_wiki_tag_creates_special_conversation(
         self, client: AsyncClient
     ) -> None:

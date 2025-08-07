@@ -41,6 +41,16 @@ def create_app() -> FastAPI:
         description="Collaborative chat & knowledge system API"
     )
     
+    # Add CORS middleware for frontend
+    from fastapi.middleware.cors import CORSMiddleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:8081", "http://localhost:8082", "http://localhost:3000", "*"],  # Allow all for dev
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    
     # In-memory storage for tests (will be replaced with database)
     # TODO: Replace with PostgreSQL + SQLAlchemy for persistence
     # TODO: Add Redis for caching frequently accessed conversations
@@ -48,12 +58,12 @@ def create_app() -> FastAPI:
     
     # WebSocket connection manager
     class ConnectionManager:
-        def __init__(self):
+        def __init__(self) -> None:
             self.active_connections: Dict[str, List[WebSocket]] = {}
             self.user_count: Dict[str, int] = {}
             self.editing_sessions: Dict[str, Set[str]] = {}  # messageId -> set of userIds
         
-        async def connect(self, websocket: WebSocket, conversation_id: str):
+        async def connect(self, websocket: WebSocket, conversation_id: str) -> None:
             await websocket.accept()
             if conversation_id not in self.active_connections:
                 self.active_connections[conversation_id] = []
@@ -61,12 +71,12 @@ def create_app() -> FastAPI:
             self.active_connections[conversation_id].append(websocket)
             self.user_count[conversation_id] += 1
         
-        def start_editing(self, message_id: str, user_id: str):
+        def start_editing(self, message_id: str, user_id: str) -> None:
             if message_id not in self.editing_sessions:
                 self.editing_sessions[message_id] = set()
             self.editing_sessions[message_id].add(user_id)
         
-        def stop_editing(self, message_id: str, user_id: str):
+        def stop_editing(self, message_id: str, user_id: str) -> None:
             if message_id in self.editing_sessions:
                 self.editing_sessions[message_id].discard(user_id)
                 if not self.editing_sessions[message_id]:
@@ -75,7 +85,7 @@ def create_app() -> FastAPI:
         def get_editors(self, message_id: str) -> List[str]:
             return list(self.editing_sessions.get(message_id, set()))
             
-        def disconnect(self, websocket: WebSocket, conversation_id: str):
+        def disconnect(self, websocket: WebSocket, conversation_id: str) -> None:
             if conversation_id in self.active_connections:
                 self.active_connections[conversation_id].remove(websocket)
                 self.user_count[conversation_id] -= 1
@@ -83,16 +93,34 @@ def create_app() -> FastAPI:
                     del self.active_connections[conversation_id]
                     del self.user_count[conversation_id]
         
-        async def broadcast(self, message: str, conversation_id: str, exclude: WebSocket = None):
+        async def broadcast(self, message: str, conversation_id: str, exclude: WebSocket | None = None) -> None:
             if conversation_id in self.active_connections:
+                connections_to_remove = []
                 for connection in self.active_connections[conversation_id]:
                     if connection != exclude:
-                        await connection.send_text(message)
+                        try:
+                            await connection.send_text(message)
+                        except Exception:
+                            # Connection is closed, mark for removal
+                            connections_to_remove.append(connection)
+                
+                # Remove closed connections
+                for conn in connections_to_remove:
+                    self.disconnect(conn, conversation_id)
         
-        async def send_to_all(self, message: str, conversation_id: str):
+        async def send_to_all(self, message: str, conversation_id: str) -> None:
             if conversation_id in self.active_connections:
+                connections_to_remove = []
                 for connection in self.active_connections[conversation_id]:
-                    await connection.send_text(message)
+                    try:
+                        await connection.send_text(message)
+                    except Exception:
+                        # Connection is closed, mark for removal
+                        connections_to_remove.append(connection)
+                
+                # Remove closed connections
+                for conn in connections_to_remove:
+                    self.disconnect(conn, conversation_id)
         
         def get_user_count(self, conversation_id: str) -> int:
             return self.user_count.get(conversation_id, 0)
@@ -142,6 +170,34 @@ def create_app() -> FastAPI:
         
         return message
     
+    @app.put("/v1/conversations/{conversation_id}/messages/{message_id}")
+    async def update_message(conversation_id: str, message_id: str, message_data: Dict[str, Any], background_tasks: BackgroundTasks) -> Message:
+        """Update a message in a conversation."""
+        if conversation_id not in conversations:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        # Find the message to update
+        conversation = conversations[conversation_id]
+        message_index = None
+        for i, msg in enumerate(conversation.messages):
+            if msg.id == message_id:
+                message_index = i
+                break
+        
+        if message_index is None:
+            raise HTTPException(status_code=404, detail="Message not found")
+        
+        # Update the message content
+        updated_message = conversation.messages[message_index]
+        if 'content' in message_data:
+            updated_message.content = message_data['content']
+        
+        # Broadcast update to WebSocket clients in background  
+        broadcast_msg = WSMessageBroadcast(message=updated_message.model_dump())
+        background_tasks.add_task(manager.send_to_all, broadcast_msg.model_dump_json(), conversation_id)
+        
+        return updated_message
+    
     
     @app.get("/v1/conversations/{conversation_id}/messages/{message_id}/editors")
     async def get_active_editors(conversation_id: str, message_id: str) -> Dict[str, List[str]]:
@@ -181,7 +237,7 @@ def create_app() -> FastAPI:
         return response
     
     @app.websocket("/v1/conversations/{conversation_id}/ws")
-    async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
+    async def websocket_endpoint(websocket: WebSocket, conversation_id: str) -> None:
         """WebSocket endpoint for real-time conversation updates."""
         # Check if conversation exists
         if conversation_id not in conversations:

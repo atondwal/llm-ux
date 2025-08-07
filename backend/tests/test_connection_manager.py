@@ -51,3 +51,53 @@ async def test_send_to_all_nonexistent_conversation(app_with_manager):
     
     # Should not raise any errors
     assert "non-existent-conversation" not in manager.active_connections
+
+
+@pytest.mark.asyncio
+async def test_broadcast_removes_closed_connections(app_with_manager):
+    """Test that broadcast removes connections that fail to send."""
+    manager = app_with_manager.manager
+    
+    # Create a mock websocket that raises exception when sending
+    class MockClosedWebSocket:
+        async def send_text(self, message):
+            raise Exception("Connection closed")
+    
+    closed_ws = MockClosedWebSocket()
+    
+    # Manually add the closed connection to manager
+    conversation_id = "test-conv"
+    manager.active_connections[conversation_id] = [closed_ws]
+    manager.user_count[conversation_id] = 1
+    
+    # Try to broadcast - should remove the closed connection
+    await manager.broadcast("test message", conversation_id)
+    
+    # Verify connection was removed
+    assert conversation_id not in manager.active_connections
+    assert conversation_id not in manager.user_count
+
+
+@pytest.mark.asyncio  
+async def test_send_to_all_removes_closed_connections(app_with_manager):
+    """Test that send_to_all removes connections that fail to send."""
+    manager = app_with_manager.manager
+    
+    # Create a mock websocket that raises exception when sending
+    class MockClosedWebSocket:
+        async def send_text(self, message):
+            raise Exception("Connection closed")
+    
+    closed_ws = MockClosedWebSocket()
+    
+    # Manually add the closed connection to manager
+    conversation_id = "test-conv"
+    manager.active_connections[conversation_id] = [closed_ws]
+    manager.user_count[conversation_id] = 1
+    
+    # Try to send_to_all - should remove the closed connection
+    await manager.send_to_all("test message", conversation_id)
+    
+    # Verify connection was removed
+    assert conversation_id not in manager.active_connections
+    assert conversation_id not in manager.user_count
