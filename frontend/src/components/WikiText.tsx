@@ -41,9 +41,10 @@ const WikiText: React.FC<WikiTextProps> = ({
             >
               <Text style={[
                 {
-                  color: '#007AFF',
+                  color: '#5F9B65',  // LessWrong green for links
                   textDecorationLine: 'underline',
-                  fontWeight: '500'
+                  fontWeight: '600',
+                  letterSpacing: 0.2
                 },
                 wikiTagStyle
               ]}>
