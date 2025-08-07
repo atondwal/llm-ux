@@ -162,6 +162,106 @@ edit_deltas (session_id, delta_json, timestamp)
 - Conflict resolution via edit sessions and deltas
 - User never sees the technical complexity
 
+### Branching Conversations (ChatGPT/Wave-Inspired)
+
+**Terminology**:
+- **Branch**: A decision point where conversation diverges (the fork)
+- **Leaf**: An actual conversation path/timeline (the end result)
+- **Version**: Alternative content for the same message slot
+
+**Core Concept**: Conversations form a tree structure where editing creates branches
+```
+Message 1 (user) ─────────────────────────┐
+    │                                      │
+Message 2 (AI) v1 ──────┐                 │
+    │                    │                 │
+Message 3 (user) v1      Message 2 (AI) v2 │ (branches)
+    │                        │             │
+Message 4 (AI) v1        Message 3 (user) v2
+    │                        │
+  Leaf A                   Leaf B
+```
+
+**Data Model**:
+```typescript
+interface ConversationTree {
+  id: string
+  branches: Map<MessageId, Branch>  // Branch points
+  leaves: Map<LeafId, Leaf>         // Complete paths
+  activeLeaf: LeafId                // Current view
+}
+
+interface Branch {
+  messageId: string        // Where the branch occurs
+  versions: Version[]      // Alternative contents
+}
+
+interface Leaf {
+  id: string
+  name?: string           // "exploring technical approach"
+  path: MessageId[]       // Sequence of message IDs
+  yjsDocument: Y.Doc      // One Yjs doc per leaf!
+  created: timestamp
+  lastActive: timestamp
+}
+
+interface Version {
+  id: string
+  content: string
+  authorId: string
+  nextMessageId?: string  // Continues to next message
+  leafId: LeafId         // Which leaf this belongs to
+}
+```
+
+**Implementation Strategy**:
+1. **One Yjs Document Per Leaf** - Each complete conversation path gets its own collaborative document
+2. **Shared Ancestry** - Messages before a branch point are shared across leaves
+3. **Copy-on-Write** - Editing an old message creates a new leaf with copied history
+4. **Active Leaf** - User views/edits one leaf at a time, can switch between them
+
+**User Experience**:
+- **Edit any message** → Creates new branch/leaf from that point
+- **Regenerate AI response** → Creates alternative version (new leaf)
+- **Navigate versions** → Left/right arrows like ChatGPT (switches leaves)
+- **Version indicator** → "2/3" shows current version of message
+- **Branch visualization** → Optional tree view to see all paths
+
+**Collaborative Branching**:
+- Multiple users can work on different leaves simultaneously
+- Each leaf has independent collaborative editing via Yjs
+- Users can see who's active on which leaf
+- Merge leaves by combining their Yjs documents
+
+**Doc View Integration**:
+- **Chat View**: Shows messages from current leaf as bubbles
+- **Doc View**: Shows current leaf's Yjs document as editable text
+- **Same Data**: Both views edit the same Yjs document for that leaf
+- **Format**: Doc view shows messages with headers/metadata:
+  ```
+  === user-1 [2024-01-10 10:30:45] ===
+  Hello, how are you doing?
+  
+  === ai-1 [2024-01-10 10:31:02] ===
+  I'm doing well, thanks!
+  ```
+- **Living Document**: Edits in Doc View update messages in Chat View
+- **Branch on Edit**: Editing in Doc View creates new leaf if modifying history
+
+**Storage**:
+```sql
+-- Branch points and versions
+branches (conversation_id, message_id, created_at)
+versions (branch_id, version_num, content, author_id, leaf_id)
+
+-- Leaves (complete paths)
+leaves (id, conversation_id, name, yjs_doc_id, created_at)
+leaf_paths (leaf_id, position, message_id, version_id)
+
+-- Active leaf per user
+user_active_leaves (user_id, conversation_id, leaf_id)
+```
+
 ### Wiki Tags as Conversations
 When user types `[[machine learning]]`:
 1. System creates/finds conversation with type='wiki_tag'
@@ -196,23 +296,32 @@ When user types `[[machine learning]]`:
 - Edit session management
 - Invisible OT implementation
 
-### Phase 3: AI Integration (2 weeks)
+### Phase 3: Branching Conversations (2 weeks)
+- Branch/leaf data model
+- One Yjs document per leaf
+- Version navigation UI (arrows)
+- Edit creates new branch/leaf
+- Version indicators on messages
+
+### Phase 4: AI Integration (2 weeks)
 - AI participants in conversations
 - `@ai` tagging and proactive modes
 - Multiple model support
 - Streaming response UI
+- Regenerate creates new leaf
 
-### Phase 4: Wiki System (2 weeks)
+### Phase 5: Wiki System (2 weeks)
 - `[[tag]]` parsing and auto-completion
 - Wiki conversations with auto-population
 - Cross-conversation tag search
 - Tag-based navigation
 
-### Phase 5: Polish & Export (1 week)
+### Phase 6: Polish & Export (1 week)
 - Keyboard shortcuts and command palette
 - Export to Markdown/plain text
 - Performance optimization
 - Documentation and examples
+- Branch/leaf visualization
 
 ## Key Design Decisions
 
