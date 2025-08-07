@@ -1,10 +1,4 @@
 module.exports = {
-  preset: 'jest-expo',
-  transform: {
-    '^.+\\.tsx?$': ['ts-jest', {
-      tsconfig: 'tsconfig.test.json'
-    }],
-  },
   testEnvironment: 'node',
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx'],
   coverageDirectory: './coverage',
@@ -26,4 +20,7 @@ module.exports = {
     '**/*.test.{ts,tsx}',
   ],
   setupFilesAfterEnv: ['<rootDir>/jest.setup.ts'],
+  transformIgnorePatterns: [
+    'node_modules/(?!(jest-)?react-native|@react-native|@react-navigation|expo|@expo|@unimodules|unimodules|@testing-library)'
+  ],
 };

@@ -1,0 +1,237 @@
+/**
+ * ChatInterface component - minimal implementation to pass tests.
+ * Following extreme TDD - only implementing what tests require.
+ */
+import React, { useState, useCallback } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  FlatList,
+  TouchableOpacity,
+  Switch,
+  StyleSheet,
+} from 'react-native';
+import { ChatInterfaceProps, Message } from '../types';
+
+const ChatInterface: React.FC<ChatInterfaceProps> = ({
+  conversation,
+  currentUserId,
+  onSendMessage,
+  onTagClick,
+  editingSessions = [],
+}) => {
+  const [inputText, setInputText] = useState('');
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editText, setEditText] = useState('');
+  const [aiProactive, setAiProactive] = useState(conversation.type === 'chat' ? false : true);
+
+  const handleSend = useCallback(() => {
+    if (!inputText.trim()) return;
+
+    const mentionsAI = inputText.includes('@ai');
+    
+    onSendMessage?.({
+      content: inputText,
+      authorId: currentUserId,
+      ...(mentionsAI && { mentionsAI: true }),
+    });
+
+    setInputText('');
+  }, [inputText, currentUserId, onSendMessage]);
+
+  const handleEditMessage = useCallback((messageId: string, content: string) => {
+    setEditingMessageId(messageId);
+    setEditText(content);
+  }, []);
+
+  const handleSaveEdit = useCallback(() => {
+    // Update message content locally (in real app, would sync)
+    const messageIndex = conversation.messages.findIndex(m => m.id === editingMessageId);
+    if (messageIndex !== -1) {
+      conversation.messages[messageIndex]!.content = editText;
+    }
+    setEditingMessageId(null);
+    setEditText('');
+  }, [editText, editingMessageId, conversation.messages]);
+
+  const renderWikiTags = useCallback((content: string) => {
+    const tagRegex = /\[\[([^\]]+)\]\]/g;
+    const parts = [];
+    let lastIndex = 0;
+    let match;
+
+    while ((match = tagRegex.exec(content)) !== null) {
+      // Add text before tag
+      if (match.index > lastIndex) {
+        parts.push(
+          <Text key={`text-${lastIndex}`}>
+            {content.substring(lastIndex, match.index)}
+          </Text>
+        );
+      }
+
+      // Add tag as clickable
+      const tagName = match[1]!;
+      parts.push(
+        <TouchableOpacity
+          key={`tag-${match.index}`}
+          testID={`wiki-tag-${tagName}`}
+          onPress={() => onTagClick?.(tagName)}
+        >
+          <Text style={styles.wikiTag}>{tagName}</Text>
+        </TouchableOpacity>
+      );
+
+      lastIndex = match.index + match[0].length;
+    }
+
+    // Add remaining text
+    if (lastIndex < content.length) {
+      parts.push(
+        <Text key={`text-${lastIndex}`}>
+          {content.substring(lastIndex)}
+        </Text>
+      );
+    }
+
+    return parts.length > 0 ? parts : <Text>{content}</Text>;
+  }, [onTagClick]);
+
+  const renderMessage = useCallback(({ item }: { item: Message }) => {
+    const isOwnMessage = item.authorId === currentUserId;
+    const isEditing = editingMessageId === item.id;
+    const editingSession = editingSessions.find(s => s.messageId === item.id);
+
+    return (
+      <TouchableOpacity
+        testID={`message-${item.id}`}
+        onLongPress={() => isOwnMessage && handleEditMessage(item.id, item.content)}
+        style={[styles.messageContainer, isOwnMessage && styles.ownMessage]}
+      >
+        {editingSession && (
+          <View testID={`editing-cursor-${editingSession.userId}`}>
+            <Text style={styles.editingIndicator}>{editingSession.userName} is editing...</Text>
+          </View>
+        )}
+        
+        {isEditing ? (
+          <TextInput
+            value={editText}
+            onChangeText={setEditText}
+            onSubmitEditing={handleSaveEdit}
+            style={styles.editInput}
+          />
+        ) : (
+          <View testID="message-item">
+            {renderWikiTags(item.content)}
+          </View>
+        )}
+      </TouchableOpacity>
+    );
+  }, [currentUserId, editingMessageId, editText, editingSessions, handleEditMessage, handleSaveEdit, renderWikiTags]);
+
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>{conversation.title}</Text>
+      
+      <View style={styles.aiToggleContainer}>
+        <Text>AI Proactive Mode:</Text>
+        <Switch
+          testID="ai-proactive-toggle"
+          value={aiProactive}
+          onValueChange={setAiProactive}
+        />
+      </View>
+
+      <FlatList
+        testID="message-list"
+        data={conversation.messages}
+        renderItem={renderMessage}
+        keyExtractor={(item) => item.id}
+        style={styles.messageList}
+      />
+
+      <View style={styles.inputContainer}>
+        <TextInput
+          placeholder="Type a message..."
+          value={inputText}
+          onChangeText={setInputText}
+          style={styles.input}
+        />
+        <TouchableOpacity
+          testID="send-button"
+          onPress={handleSend}
+          style={styles.sendButton}
+        >
+          <Text>Send</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+};
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    padding: 16,
+  },
+  title: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 16,
+  },
+  aiToggleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  messageList: {
+    flex: 1,
+  },
+  messageContainer: {
+    padding: 12,
+    marginVertical: 4,
+    backgroundColor: '#f0f0f0',
+    borderRadius: 8,
+  },
+  ownMessage: {
+    backgroundColor: '#e3f2fd',
+    alignSelf: 'flex-end',
+  },
+  editingIndicator: {
+    fontSize: 12,
+    fontStyle: 'italic',
+    color: '#666',
+  },
+  editInput: {
+    borderWidth: 1,
+    borderColor: '#ccc',
+    padding: 8,
+    borderRadius: 4,
+  },
+  wikiTag: {
+    color: '#2196F3',
+    textDecorationLine: 'underline',
+  },
+  inputContainer: {
+    flexDirection: 'row',
+    marginTop: 16,
+  },
+  input: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 4,
+    padding: 8,
+    marginRight: 8,
+  },
+  sendButton: {
+    backgroundColor: '#2196F3',
+    padding: 12,
+    borderRadius: 4,
+    justifyContent: 'center',
+  },
+});
+
+export default ChatInterface;

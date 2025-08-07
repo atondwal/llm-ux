@@ -200,14 +200,14 @@ describe('ChatInterface', () => {
       );
 
       const message = getByTestId('message-msg-1');
-      fireEvent.longPress(message);
+      fireEvent(message, 'onLongPress');
 
       // Should enter edit mode
       const editInput = getByDisplayValue('Original message');
       expect(editInput).toBeTruthy();
 
       fireEvent.changeText(editInput, 'Edited message');
-      fireEvent.submitEditing(editInput);
+      fireEvent(editInput, 'onSubmitEditing');
 
       expect(getByTestId('message-msg-1').props.children).toContain('Edited message');
     });
