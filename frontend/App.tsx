@@ -17,7 +17,7 @@ export default function App() {
   const navigate = (screen: CurrentScreen, params?: { concept?: string }) => {
     setNavigationState({
       currentScreen: screen,
-      wikiConcept: params?.concept || undefined
+      wikiConcept: params?.concept
     });
   };
 

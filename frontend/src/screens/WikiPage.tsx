@@ -37,37 +37,27 @@ const WikiPage: React.FC<WikiPageProps> = ({ navigation, route }) => {
   const loadRelatedMessages = async () => {
     try {
       setLoading(true);
-      console.log('🔍 Loading related messages for concept:', concept);
       
       // Fetch all conversations and their messages
       const conversationsResponse = await fetch(`${API_URL}/v1/conversations`);
       const conversationsData = await conversationsResponse.json();
-      console.log('📝 Conversations fetched:', conversationsData);
       
       const allMessages: Message[] = [];
       
       // Get messages from all conversations
       for (const conversation of conversationsData.data || []) {
-        console.log('📨 Fetching messages for conversation:', conversation.id);
         const messagesResponse = await fetch(`${API_URL}/v1/conversations/${conversation.id}/messages`);
         const messagesData = await messagesResponse.json();
-        console.log(`📨 Messages for ${conversation.id}:`, messagesData);
         allMessages.push(...(messagesData.data || []));
       }
       
-      console.log('📨 Total messages found:', allMessages.length);
       
       // Filter messages that contain this concept
       const filtered = allMessages.filter(message => {
         const concepts = extractWikiConcepts(message.content);
         const hasThisConcept = concepts.includes(concept);
-        if (hasThisConcept) {
-          console.log('✅ Message contains concept:', { messageId: message.id, content: message.content, concepts });
-        }
         return hasThisConcept;
       });
-      
-      console.log('🎯 Filtered messages for concept "' + concept + '":', filtered);
       setRelatedMessages(filtered);
     } catch (error) {
       console.error('Failed to load related messages:', error);
@@ -107,7 +97,6 @@ const WikiPage: React.FC<WikiPageProps> = ({ navigation, route }) => {
     const ws = new WebSocket(`ws://localhost:8000/v1/conversations/${conversationId}/ws`);
     
     ws.onopen = () => {
-      console.log('🔌 Wiki WebSocket connected');
     };
 
     ws.onmessage = (event) => {
@@ -141,7 +130,6 @@ const WikiPage: React.FC<WikiPageProps> = ({ navigation, route }) => {
     };
 
     ws.onclose = () => {
-      console.log('Wiki WebSocket disconnected');
     };
 
     wsRef.current = ws;

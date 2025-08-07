@@ -7,7 +7,6 @@ const API_URL = 'http://localhost:8000';
 const WS_URL = 'ws://localhost:8000';
 
 export default function App({ navigation }: { navigation?: any }) {
-  const [conversations, setConversations] = useState<any[]>([]);
   const [currentConversation, setCurrentConversation] = useState<any>(null);
   const [messages, setMessages] = useState<any[]>([]);
   const [inputText, setInputText] = useState('');
@@ -17,7 +16,6 @@ export default function App({ navigation }: { navigation?: any }) {
   const [currentUserId, setCurrentUserId] = useState('user-1');
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
-  const [liveTextUpdates, setLiveTextUpdates] = useState<{[messageId: string]: string}>({});
   const [cursorPositions, setCursorPositions] = useState<{[key: string]: {userId: string, position: number}[]}>({});
   const wsRef = useRef<WebSocket | null>(null);
   const textDeltaTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -35,7 +33,6 @@ export default function App({ navigation }: { navigation?: any }) {
       .then(res => res.json())
       .then(data => {
         const convs = data.data || [];
-        setConversations(convs);
         if (convs.length > 0) {
           selectConversation(convs[0]);
         } else {
@@ -96,17 +93,14 @@ export default function App({ navigation }: { navigation?: any }) {
       wsRef.current.close();
     }
 
-    console.log(`Attempting WebSocket connection to: ${WS_URL}/v1/conversations/${conversationId}/ws`);
     const ws = new WebSocket(`${WS_URL}/v1/conversations/${conversationId}/ws`);
     
     ws.onopen = () => {
-      console.log('✅ WebSocket connected successfully!');
       setWsConnected(true);
     };
 
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
-      console.log('📨 WebSocket message:', data);
       
       if (data.type === 'connection') {
         // Connection confirmed
@@ -136,33 +130,17 @@ export default function App({ navigation }: { navigation?: any }) {
         );
       } else if (data.type === 'text_delta') {
         // Real-time collaborative text synchronization
-        console.log('📝 Received text delta:', data);
-        console.log('📝 Current state:', { 
-          editingMessageId, 
-          editingMessageIdRef: editingMessageIdRef.current,
-          incomingMessageId: data.messageId, 
-          messageIdMatch: editingMessageIdRef.current === data.messageId,
-          isMyMessage: data.userId === currentUserId 
-        });
         // If we're currently editing this message, update our text field in real-time
         if (editingMessageIdRef.current === data.messageId) {
-          console.log('✅ APPLYING text delta - updating from', editingText, 'to', data.text);
           isReceivingUpdateRef.current = true;
           setEditingText(data.text);
           setTimeout(() => {
             isReceivingUpdateRef.current = false;
           }, 50); // Brief delay to prevent echo
         } else {
-          console.log('❌ NOT applying - different message or not editing');
         }
-        // Also store for other potential uses
-        setLiveTextUpdates(prev => ({
-          ...prev,
-          [data.messageId]: data.text
-        }));
       } else if (data.type === 'cursor_move') {
         // Real-time cursor position updates from other users
-        console.log('👆 Received cursor move:', data);
         setCursorPositions(prev => ({
           ...prev,
           [data.messageId]: [
@@ -171,17 +149,15 @@ export default function App({ navigation }: { navigation?: any }) {
           ]
         }));
       } else if (data.type === 'presence') {
-        console.log(`Active users: ${data.activeUsers}`);
       }
     };
 
     ws.onerror = (error) => {
-      console.error('❌ WebSocket error:', error);
+      console.error('WebSocket error:', error);
       setWsConnected(false);
     };
 
     ws.onclose = (event) => {
-      console.log('🔌 WebSocket disconnected. Code:', event.code, 'Reason:', event.reason);
       setWsConnected(false);
     };
 
@@ -202,9 +178,8 @@ export default function App({ navigation }: { navigation?: any }) {
       });
       
       if (response.ok) {
-        const message = await response.json();
+        await response.json(); // Message will be added via WebSocket broadcast
         setInputText('');
-        // Message will be added via WebSocket broadcast
       }
     } catch (error) {
       console.error('Failed to send message:', error);
@@ -212,7 +187,6 @@ export default function App({ navigation }: { navigation?: any }) {
   };
 
   const startEditing = (messageId: string) => {
-    console.log('🎬 Starting editing:', { messageId, userId: currentUserId });
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
         type: 'start_editing',
@@ -223,7 +197,6 @@ export default function App({ navigation }: { navigation?: any }) {
   };
 
   const stopEditing = (messageId: string) => {
-    console.log('🛑 Stopping editing:', { messageId, userId: currentUserId });
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
         type: 'stop_editing',
@@ -329,10 +302,8 @@ export default function App({ navigation }: { navigation?: any }) {
                 ]}
                 onLongPress={() => {
                   // Allow editing any message for collaborative testing
-                  console.log('👆 Long press - starting edit for message:', msg.id);
                   setEditingMessageId(msg.id);
                   setEditingText(msg.content);
-                  console.log('📝 Set editingMessageId to:', msg.id);
                   startEditing(msg.id);
                 }}
               >
@@ -348,7 +319,6 @@ export default function App({ navigation }: { navigation?: any }) {
                     fontWeight: '600'
                   }}
                   onWikiTagPress={(concept) => {
-                    console.log('🔗 Wiki tag clicked:', concept);
                     if (navigation) {
                       navigation.navigate('WikiPage', { concept });
                     }
@@ -405,14 +375,10 @@ export default function App({ navigation }: { navigation?: any }) {
               style={styles.editingInput}
               value={editingText}
               onChangeText={(text) => {
-                console.log('✏️ Text changed:', { text, editingMessageId, isReceiving: isReceivingUpdateRef.current });
                 setEditingText(text);
                 // Send real-time text delta to other users (but not if we're receiving an update)
                 if (editingMessageId && !isReceivingUpdateRef.current) {
-                  console.log('📤 Sending text_delta:', { messageId: editingMessageId, text });
-                  sendTextDelta(editingMessageId, text, text.length); // Cursor at end for simplicity
-                } else {
-                  console.log('🚫 Skipping text_delta send:', { editingMessageId: !!editingMessageId, isReceiving: isReceivingUpdateRef.current });
+                  sendTextDelta(editingMessageId, text, text.length);
                 }
               }}
               onSelectionChange={(event) => {
@@ -429,7 +395,6 @@ export default function App({ navigation }: { navigation?: any }) {
               <TouchableOpacity 
                 style={[styles.editingButton, styles.cancelButton]} 
                 onPress={() => {
-                  console.log('❌ Cancel button pressed - clearing editingMessageId');
                   stopEditing(editingMessageId);
                   setEditingMessageId(null);
                   setEditingText('');
@@ -453,7 +418,6 @@ export default function App({ navigation }: { navigation?: any }) {
                       
                       if (response.ok) {
                         // Message update will be received via WebSocket broadcast
-                        console.log('💾 Save successful - clearing editingMessageId');
                         stopEditing(editingMessageId);
                         setEditingMessageId(null);
                         setEditingText('');
