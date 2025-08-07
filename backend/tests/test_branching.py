@@ -216,52 +216,6 @@ class TestVersionManagement:
         assert result["content"] == "AI response version 1"
 
 
-class TestLeafWebSockets:
-    """Test WebSocket connections for leaf-specific Yjs documents."""
-    
-    def test_websocket_connects_to_leaf(self, client, conversation_with_messages):
-        """WebSocket should connect to specific leaf's Yjs document."""
-        conv_id = conversation_with_messages["conversation"]["id"]
-        
-        # Get active leaf
-        leaf_response = client.get(f"/v1/conversations/{conv_id}/leaves/active")
-        leaf = leaf_response.json()
-        
-        # Connect WebSocket to leaf
-        with client.websocket_connect(f"/v1/conversations/{conv_id}/leaves/{leaf['id']}/ws") as websocket:
-            # Should receive connection confirmation
-            data = websocket.receive_json()
-            assert data["type"] == "connection"
-            assert data["leafId"] == leaf["id"]
-            assert data["conversationId"] == conv_id
-    
-    def test_separate_yjs_docs_per_leaf(self, client, conversation_with_messages):
-        """Each leaf should have its own Yjs document."""
-        conv_id = conversation_with_messages["conversation"]["id"]
-        msg2_id = conversation_with_messages["messages"][1]["id"]
-        
-        # Create a new leaf
-        new_leaf_response = client.post(f"/v1/conversations/{conv_id}/leaves", json={
-            "branch_from_message_id": msg2_id,
-            "name": "alternative"
-        })
-        new_leaf = new_leaf_response.json()
-        
-        # Get main leaf
-        main_leaf_response = client.get(f"/v1/conversations/{conv_id}/leaves/active")
-        main_leaf = main_leaf_response.json()
-        
-        # Connect to both leaves
-        with client.websocket_connect(f"/v1/conversations/{conv_id}/leaves/{main_leaf['id']}/ws") as ws1:
-            with client.websocket_connect(f"/v1/conversations/{conv_id}/leaves/{new_leaf['id']}/ws") as ws2:
-                # Send different content to each
-                ws1.send_json({"type": "yjs_update", "content": "Main leaf content"})
-                ws2.send_json({"type": "yjs_update", "content": "Alternative leaf content"})
-                
-                # Each should maintain separate state
-                # (In real implementation, would verify Yjs document independence)
-                assert ws1 != ws2  # Different connections
-
 
 class TestCopyOnWrite:
     """Test copy-on-write behavior when editing old messages."""
@@ -320,10 +274,14 @@ class TestCopyOnWrite:
         new_msg = new_msg_response.json()
         assert new_msg["leaf_id"] == new_leaf["id"]
         
+        # Get the main leaf ID
+        all_leaves = client.get(f"/v1/conversations/{conv_id}/leaves").json()
+        main_leaf = next(l for l in all_leaves["leaves"] if l["name"] == "main")
+        
         # Verify it's only in the new leaf
         main_messages = client.get(
             f"/v1/conversations/{conv_id}/messages",
-            params={"leaf_id": "main"}
+            params={"leaf_id": main_leaf["id"]}
         ).json()
         
         # Main leaf shouldn't have the new message

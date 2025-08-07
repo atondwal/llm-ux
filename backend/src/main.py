@@ -230,9 +230,22 @@ def create_app() -> FastAPI:
                 this_leaf_messages = set(leaf_messages.get(target_leaf.id, []))
                 
                 for i, msg in enumerate(conversation.messages):
+                    # Include messages up to and including branch point
                     # Skip messages after branch point unless they belong to this leaf
                     if branch_point_index is not None and i > branch_point_index:
                         if msg.id not in this_leaf_messages:
+                            continue
+                    # For messages before or at branch point, always include them
+                    # But for messages that don't have a branch point, check leaf ownership
+                    elif branch_point_index is None:
+                        # No branch point means this is the main leaf or an unbranched leaf
+                        # Skip messages that were explicitly created in other leaves
+                        message_in_other_leaf = False
+                        for other_leaf_id, other_messages in leaf_messages.items():
+                            if other_leaf_id != target_leaf.id and msg.id in other_messages:
+                                message_in_other_leaf = True
+                                break
+                        if message_in_other_leaf:
                             continue
                     
                     msg_dict = msg.model_dump()
@@ -531,86 +544,6 @@ def create_app() -> FastAPI:
             ]
         )
         return response
-    
-    # Store Yjs documents in memory (would be Redis/DB in production)
-    yjs_documents: Dict[str, List[WebSocket]] = {}
-    
-    @app.websocket("/ws/collaborative/{document_id}")
-    async def yjs_websocket_endpoint(websocket: WebSocket, document_id: str) -> None:
-        """WebSocket endpoint for Yjs collaborative editing."""
-        await websocket.accept()
-        
-        # Add to document connections
-        if document_id not in yjs_documents:
-            yjs_documents[document_id] = []
-        yjs_documents[document_id].append(websocket)
-        
-        try:
-            while True:
-                # Receive binary data from Yjs
-                data = await websocket.receive_bytes()
-                
-                # Broadcast to all other clients editing this document
-                for conn in yjs_documents[document_id]:
-                    if conn != websocket:
-                        try:
-                            await conn.send_bytes(data)
-                        except:
-                            # Remove dead connections
-                            yjs_documents[document_id].remove(conn)
-        except WebSocketDisconnect:
-            # Remove from connections
-            if document_id in yjs_documents:
-                if websocket in yjs_documents[document_id]:
-                    yjs_documents[document_id].remove(websocket)
-                if not yjs_documents[document_id]:
-                    del yjs_documents[document_id]
-    
-    @app.websocket("/v1/conversations/{conversation_id}/leaves/{leaf_id}/ws")
-    async def leaf_websocket_endpoint(websocket: WebSocket, conversation_id: str, leaf_id: str) -> None:
-        """WebSocket endpoint for leaf-specific Yjs document."""
-        # Check if conversation and leaf exist
-        if conversation_id not in conversations:
-            await websocket.close(code=1008, reason="Conversation not found")
-            return
-        
-        leaf_exists = any(leaf.id == leaf_id for leaf in leaves.get(conversation_id, []))
-        if not leaf_exists:
-            await websocket.close(code=1008, reason="Leaf not found")
-            return
-        
-        await websocket.accept()
-        
-        # Send connection confirmation
-        await websocket.send_json({
-            "type": "connection",
-            "conversationId": conversation_id,
-            "leafId": leaf_id
-        })
-        
-        # Store connection in yjs_documents using leaf_id as key
-        if leaf_id not in yjs_documents:
-            yjs_documents[leaf_id] = []
-        yjs_documents[leaf_id].append(websocket)
-        
-        try:
-            while True:
-                # For now, just echo Yjs updates
-                data = await websocket.receive_json()
-                if data.get("type") == "yjs_update":
-                    # Broadcast to other clients on this leaf
-                    for conn in yjs_documents[leaf_id]:
-                        if conn != websocket:
-                            try:
-                                await conn.send_json(data)
-                            except:
-                                yjs_documents[leaf_id].remove(conn)
-        except WebSocketDisconnect:
-            if leaf_id in yjs_documents:
-                if websocket in yjs_documents[leaf_id]:
-                    yjs_documents[leaf_id].remove(websocket)
-                if not yjs_documents[leaf_id]:
-                    del yjs_documents[leaf_id]
     
     @app.websocket("/v1/conversations/{conversation_id}/ws")
     async def websocket_endpoint(websocket: WebSocket, conversation_id: str) -> None:
