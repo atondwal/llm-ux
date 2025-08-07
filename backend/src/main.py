@@ -2,13 +2,14 @@
 Main FastAPI application.
 Following extreme TDD - implementing only what tests require.
 """
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks, Depends
 from fastapi.responses import JSONResponse
 from typing import Dict, Any, List, Set, Optional
 import uuid
 from datetime import datetime
 import json
 import asyncio
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
     Conversation,
@@ -41,6 +42,8 @@ from .websocket_models import (
     WSTextDelta,
     WSCursorMove
 )
+from .database import get_db, init_db, async_session
+from .repository import ConversationRepository, LeafRepository
 
 
 def create_app() -> FastAPI:
@@ -50,6 +53,11 @@ def create_app() -> FastAPI:
         version="0.1.0",
         description="Collaborative chat & knowledge system API"
     )
+    
+    @app.on_event("startup")
+    async def startup_event():
+        """Initialize database on startup."""
+        await init_db()
     
     # Add CORS middleware for frontend
     from fastapi.middleware.cors import CORSMiddleware
@@ -61,17 +69,8 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     
-    # In-memory storage for tests (will be replaced with database)
-    # TODO: Replace with PostgreSQL + SQLAlchemy for persistence
-    # TODO: Add Redis for caching frequently accessed conversations
-    conversations: Dict[str, Conversation] = {}
-    
-    # Branching storage
-    leaves: Dict[str, List[Leaf]] = {}  # conversation_id -> list of leaves
-    active_leaves: Dict[str, str] = {}  # conversation_id -> active leaf_id
-    message_versions: Dict[str, List[MessageVersion]] = {}  # message_id -> list of versions
-    leaf_messages: Dict[str, List[str]] = {}  # leaf_id -> list of message_ids created in this leaf
-    # Note: Branch points are derived from leaves with same parent_message_id
+    # Keep WebSocket connection state in memory (not persisted)
+    # Database handles all persistent data
     
     # WebSocket connection manager
     class ConnectionManager:
@@ -148,146 +147,88 @@ def create_app() -> FastAPI:
     app.manager = manager  # type: ignore
     
     @app.get("/v1/conversations")
-    async def list_conversations() -> Dict[str, Any]:
+    async def list_conversations(db: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
         """List all conversations."""
-        return {"data": list(conversations.values())}
+        repo = ConversationRepository(db)
+        conversations = await repo.list_all()
+        return {"data": [conv.model_dump() for conv in conversations]}
     
     @app.get("/v1/wiki/{concept}")
-    async def get_or_create_wiki_conversation(concept: str) -> Conversation:
+    async def get_or_create_wiki_conversation(concept: str, db: AsyncSession = Depends(get_db)) -> Conversation:
         """Get or create a wiki conversation for a concept."""
-        # Check if wiki conversation already exists for this concept
         wiki_id = f"wiki-{concept.lower().replace(' ', '-')}"
         
-        if wiki_id not in conversations:
+        repo = ConversationRepository(db)
+        conversation = await repo.get(wiki_id)
+        
+        if not conversation:
             # Create new wiki conversation
-            conversations[wiki_id] = Conversation(
+            conversation = Conversation(
                 id=wiki_id,
                 type="wiki",
                 title=concept,
                 participants=[],
                 messages=[]
             )
-        
-        return conversations[wiki_id]
-    
-    @app.post("/v1/conversations", status_code=201)
-    async def create_conversation(conversation: Conversation) -> Conversation:
-        """Create a new conversation."""
-        # Store the conversation
-        conversations[conversation.id] = conversation
-        
-        # Create default "main" leaf for this conversation
-        main_leaf = Leaf(
-            conversation_id=conversation.id,
-            name="main"
-        )
-        leaves[conversation.id] = [main_leaf]
-        active_leaves[conversation.id] = main_leaf.id
-        # Track any existing messages as belonging to main
-        leaf_messages[main_leaf.id] = [msg.id for msg in conversation.messages]
+            conversation = await repo.create(conversation)
         
         return conversation
     
+    @app.post("/v1/conversations", status_code=201)
+    async def create_conversation(conversation: Conversation, db: AsyncSession = Depends(get_db)) -> Conversation:
+        """Create a new conversation."""
+        repo = ConversationRepository(db)
+        return await repo.create(conversation)
+    
     @app.get("/v1/conversations/{conversation_id}")
-    async def get_conversation(conversation_id: str) -> Conversation:
+    async def get_conversation(conversation_id: str, db: AsyncSession = Depends(get_db)) -> Conversation:
         """Get a conversation by ID."""
-        if conversation_id not in conversations:
+        repo = ConversationRepository(db)
+        conversation = await repo.get(conversation_id)
+        if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
-        return conversations[conversation_id]
+        return conversation
     
     @app.get("/v1/conversations/{conversation_id}/messages")
-    async def get_messages(conversation_id: str, leaf_id: Optional[str] = None) -> Dict[str, Any]:
+    async def get_messages(conversation_id: str, leaf_id: Optional[str] = None, db: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
         """Get all messages from a conversation, optionally filtered by leaf."""
-        if conversation_id not in conversations:
+        repo = ConversationRepository(db)
+        
+        # Check conversation exists
+        conversation = await repo.get(conversation_id)
+        if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
         
-        conversation = conversations[conversation_id]
-        messages_list = []
-        
-        # If leaf_id specified, get versions for that leaf
-        if leaf_id:
-            target_leaf = None
-            for leaf in leaves.get(conversation_id, []):
-                if leaf.id == leaf_id:
-                    target_leaf = leaf
-                    break
-            
-            if not target_leaf:
-                # Return original messages if leaf not found
-                messages_list = [msg.model_dump() for msg in conversation.messages]
-            else:
-                # Return messages with leaf-specific versions
-                # If this leaf has a branch point, only include messages up to that point
-                # plus any messages created in this leaf
-                branch_point_index = None
-                if target_leaf.branch_point_message_id:
-                    for i, msg in enumerate(conversation.messages):
-                        if msg.id == target_leaf.branch_point_message_id:
-                            branch_point_index = i
-                            break
-                
-                # Get messages created in this leaf
-                this_leaf_messages = set(leaf_messages.get(target_leaf.id, []))
-                
-                for i, msg in enumerate(conversation.messages):
-                    # Include messages up to and including branch point
-                    # Skip messages after branch point unless they belong to this leaf
-                    if branch_point_index is not None and i > branch_point_index:
-                        if msg.id not in this_leaf_messages:
-                            continue
-                    # For messages before or at branch point, always include them
-                    # But for messages that don't have a branch point, check leaf ownership
-                    elif branch_point_index is None:
-                        # No branch point means this is the main leaf or an unbranched leaf
-                        # Skip messages that were explicitly created in other leaves
-                        message_in_other_leaf = False
-                        for other_leaf_id, other_messages in leaf_messages.items():
-                            if other_leaf_id != target_leaf.id and msg.id in other_messages:
-                                message_in_other_leaf = True
-                                break
-                        if message_in_other_leaf:
-                            continue
-                    
-                    msg_dict = msg.model_dump()
-                    
-                    # Check if this leaf has a specific version of this message
-                    if msg.id in target_leaf.message_versions:
-                        version_idx = target_leaf.message_versions[msg.id]
-                        msg_versions = message_versions.get(msg.id, [])
-                        if version_idx < len(msg_versions):
-                            version = msg_versions[version_idx]
-                            msg_dict["content"] = version.content
-                    
-                    msg_dict["leaf_id"] = leaf_id
-                    messages_list.append(msg_dict)
-        else:
-            # Return original messages
-            messages_list = [msg.model_dump() for msg in conversation.messages]
-        
-        return {"data": messages_list}
+        messages = await repo.get_messages(conversation_id, leaf_id)
+        return {"data": messages}
     
     @app.post("/v1/conversations/{conversation_id}/messages", status_code=201)
-    async def add_message(conversation_id: str, message_data: Dict[str, Any], background_tasks: BackgroundTasks) -> Dict[str, Any]:
+    async def add_message(
+        conversation_id: str, 
+        message_data: Dict[str, Any], 
+        background_tasks: BackgroundTasks,
+        db: AsyncSession = Depends(get_db)
+    ) -> Dict[str, Any]:
         """Add a message to a conversation."""
-        if conversation_id not in conversations:
+        repo = ConversationRepository(db)
+        
+        # Check conversation exists
+        conversation = await repo.get(conversation_id)
+        if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
         
-        # Create message with conversation_id
+        # Create message
         message = Message(
             conversation_id=conversation_id,
             **message_data
         )
         
-        # Add message to conversation
-        conversations[conversation_id].messages.append(message)
+        # Get active leaf
+        leaf_repo = LeafRepository(db)
+        active_leaf = await leaf_repo.get_active(conversation_id)
         
-        # Get current active leaf
-        active_leaf_id = active_leaves.get(conversation_id, "main")
-        
-        # Track this message as belonging to the active leaf
-        if active_leaf_id not in leaf_messages:
-            leaf_messages[active_leaf_id] = []
-        leaf_messages[active_leaf_id].append(message.id)
+        # Add message to database
+        await repo.add_message(conversation_id, message, active_leaf.id if active_leaf else None)
         
         # Broadcast to WebSocket clients in background
         broadcast_msg = WSMessageBroadcast(message=message.model_dump())
@@ -295,54 +236,43 @@ def create_app() -> FastAPI:
         
         # Return message with leaf_id
         response = message.model_dump()
-        response["leaf_id"] = active_leaf_id
+        response["leaf_id"] = active_leaf.id if active_leaf else "main"
         return response
     
     @app.put("/v1/conversations/{conversation_id}/messages/{message_id}")
-    async def update_message(conversation_id: str, message_id: str, message_data: Dict[str, Any], background_tasks: BackgroundTasks) -> Message:
+    async def update_message(
+        conversation_id: str, 
+        message_id: str, 
+        message_data: Dict[str, Any], 
+        background_tasks: BackgroundTasks,
+        db: AsyncSession = Depends(get_db)
+    ) -> Message:
         """Update a message in a conversation - creates a new version if in a different leaf."""
-        if conversation_id not in conversations:
+        repo = ConversationRepository(db)
+        
+        # Check conversation exists
+        conversation = await repo.get(conversation_id)
+        if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
         
-        # Find the message to update
-        conversation = conversations[conversation_id]
-        message_index = None
-        for i, msg in enumerate(conversation.messages):
+        # Check message exists
+        message_found = False
+        for msg in conversation.messages:
             if msg.id == message_id:
-                message_index = i
+                message_found = True
                 break
         
-        if message_index is None:
+        if not message_found:
             raise HTTPException(status_code=404, detail="Message not found")
         
-        updated_message = conversation.messages[message_index]
+        # Update message
+        leaf_id = message_data.get('leaf_id')
+        content = message_data.get('content', '')
         
-        # If leaf_id specified, create a new version for that leaf
-        if 'leaf_id' in message_data:
-            leaf_id = message_data['leaf_id']
-            
-            # Create new version
-            new_version = MessageVersion(
-                content=message_data['content'],
-                author_id=updated_message.author_id,
-                leaf_id=leaf_id
-            )
-            
-            if message_id not in message_versions:
-                message_versions[message_id] = []
-            
-            # Add version and track its index
-            version_index = len(message_versions[message_id])
-            message_versions[message_id].append(new_version)
-            
-            # Update leaf's message versions mapping
-            for leaf in leaves.get(conversation_id, []):
-                if leaf.id == leaf_id:
-                    leaf.message_versions[message_id] = version_index
-                    break
-        elif 'content' in message_data:
-            # Update main version
-            updated_message.content = message_data['content']
+        updated_message = await repo.update_message(conversation_id, message_id, content, leaf_id)
+        
+        if not updated_message:
+            raise HTTPException(status_code=404, detail="Message not found")
         
         # Broadcast update to WebSocket clients in background  
         broadcast_msg = WSMessageBroadcast(message=updated_message.model_dump())
@@ -353,126 +283,115 @@ def create_app() -> FastAPI:
     
     # Leaf management endpoints
     @app.get("/v1/conversations/{conversation_id}/leaves")
-    async def get_leaves(conversation_id: str) -> Dict[str, Any]:
+    async def get_leaves(conversation_id: str, db: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
         """Get all leaves for a conversation."""
-        if conversation_id not in conversations:
+        # Check conversation exists
+        conv_repo = ConversationRepository(db)
+        conversation = await conv_repo.get(conversation_id)
+        if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
         
-        conv_leaves = leaves.get(conversation_id, [])
-        active_leaf_id = active_leaves.get(conversation_id)
+        leaf_repo = LeafRepository(db)
+        conv_leaves = await leaf_repo.get_all(conversation_id)
+        active_leaf = await leaf_repo.get_active(conversation_id)
         
         return {
             "leaves": [leaf.model_dump() for leaf in conv_leaves],
-            "active_leaf_id": active_leaf_id
+            "active_leaf_id": active_leaf.id if active_leaf else None
         }
     
     @app.get("/v1/conversations/{conversation_id}/leaves/active")
-    async def get_active_leaf(conversation_id: str) -> Leaf:
+    async def get_active_leaf(conversation_id: str, db: AsyncSession = Depends(get_db)) -> Leaf:
         """Get the currently active leaf."""
-        if conversation_id not in conversations:
+        # Check conversation exists
+        conv_repo = ConversationRepository(db)
+        conversation = await conv_repo.get(conversation_id)
+        if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
         
-        active_leaf_id = active_leaves.get(conversation_id)
-        if not active_leaf_id:
+        leaf_repo = LeafRepository(db)
+        active_leaf = await leaf_repo.get_active(conversation_id)
+        
+        if not active_leaf:
             raise HTTPException(status_code=404, detail="No active leaf found")
         
-        conv_leaves = leaves.get(conversation_id, [])
-        for leaf in conv_leaves:
-            if leaf.id == active_leaf_id:
-                return leaf
-        
-        raise HTTPException(status_code=404, detail="Active leaf not found")
+        return active_leaf
     
     @app.post("/v1/conversations/{conversation_id}/leaves", status_code=201)
-    async def create_leaf(conversation_id: str, request: LeafCreateRequest) -> Leaf:
+    async def create_leaf(
+        conversation_id: str, 
+        request: LeafCreateRequest,
+        db: AsyncSession = Depends(get_db)
+    ) -> Leaf:
         """Create a new leaf by branching from a message."""
-        if conversation_id not in conversations:
+        # Check conversation exists
+        conv_repo = ConversationRepository(db)
+        conversation = await conv_repo.get(conversation_id)
+        if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
         
-        # Create new leaf
-        new_leaf = Leaf(
+        leaf_repo = LeafRepository(db)
+        new_leaf = await leaf_repo.create(
             conversation_id=conversation_id,
             name=request.name,
-            branch_point_message_id=request.branch_from_message_id
+            branch_from_message_id=request.branch_from_message_id,
+            new_content=request.new_content
         )
-        
-        # Add to leaves list
-        if conversation_id not in leaves:
-            leaves[conversation_id] = []
-        leaves[conversation_id].append(new_leaf)
-        
-        # If new content provided, create a new version for the message
-        if request.new_content:
-            # Get the author from the original message
-            author_id = "unknown"
-            conversation = conversations[conversation_id]
-            for msg in conversation.messages:
-                if msg.id == request.branch_from_message_id:
-                    author_id = msg.author_id
-                    break
-            
-            # Create new version
-            new_version = MessageVersion(
-                content=request.new_content,
-                author_id=author_id,
-                leaf_id=new_leaf.id
-            )
-            
-            if request.branch_from_message_id not in message_versions:
-                message_versions[request.branch_from_message_id] = []
-            
-            # Add version and track its index in the leaf
-            version_index = len(message_versions[request.branch_from_message_id])
-            message_versions[request.branch_from_message_id].append(new_version)
-            new_leaf.message_versions[request.branch_from_message_id] = version_index
         
         return new_leaf
     
     @app.put("/v1/conversations/{conversation_id}/leaves/active")
-    async def switch_active_leaf(conversation_id: str, request: LeafSwitchRequest) -> Dict[str, str]:
+    async def switch_active_leaf(
+        conversation_id: str, 
+        request: LeafSwitchRequest,
+        db: AsyncSession = Depends(get_db)
+    ) -> Dict[str, str]:
         """Switch the active leaf for a conversation."""
-        if conversation_id not in conversations:
+        # Check conversation exists
+        conv_repo = ConversationRepository(db)
+        conversation = await conv_repo.get(conversation_id)
+        if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
         
-        # Verify leaf exists
-        conv_leaves = leaves.get(conversation_id, [])
-        leaf_exists = any(leaf.id == request.leaf_id for leaf in conv_leaves)
+        leaf_repo = LeafRepository(db)
+        success = await leaf_repo.set_active(conversation_id, request.leaf_id)
         
-        if not leaf_exists:
+        if not success:
             raise HTTPException(status_code=404, detail="Leaf not found")
-        
-        # Switch active leaf
-        active_leaves[conversation_id] = request.leaf_id
         
         return {"active_leaf_id": request.leaf_id}
     
     # Version management endpoints
     @app.get("/v1/conversations/{conversation_id}/messages/{message_id}/versions")
-    async def get_message_versions(conversation_id: str, message_id: str) -> Dict[str, Any]:
+    async def get_message_versions(
+        conversation_id: str, 
+        message_id: str,
+        db: AsyncSession = Depends(get_db)
+    ) -> Dict[str, Any]:
         """Get all versions of a message."""
-        if conversation_id not in conversations:
+        # Check conversation exists
+        conv_repo = ConversationRepository(db)
+        conversation = await conv_repo.get(conversation_id)
+        if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
         
-        # Get original message content
-        conversation = conversations[conversation_id]
-        original_content = None
+        # Check message exists
+        message_found = False
         for msg in conversation.messages:
             if msg.id == message_id:
-                original_content = msg.content
+                message_found = True
                 break
         
-        if original_content is None:
+        if not message_found:
             raise HTTPException(status_code=404, detail="Message not found")
         
-        # Get all versions
-        versions = message_versions.get(message_id, [])
-        
-        # Combine original + versions
-        all_versions = [{"content": original_content, "version_number": 0, "leaf_id": "main"}]
-        all_versions.extend([v.model_dump() for v in versions])
+        leaf_repo = LeafRepository(db)
+        all_versions = await leaf_repo.get_message_versions(message_id)
         
         # Find current version (based on active leaf)
-        active_leaf_id = active_leaves.get(conversation_id, "main")
+        active_leaf = await leaf_repo.get_active(conversation_id)
+        active_leaf_id = active_leaf.id if active_leaf else "main"
+        
         current_version = 0
         for i, v in enumerate(all_versions):
             if v.get("leaf_id") == active_leaf_id:
@@ -485,13 +404,15 @@ def create_app() -> FastAPI:
         }
     
     @app.put("/v1/conversations/{conversation_id}/messages/{message_id}/version")
-    async def navigate_version(conversation_id: str, message_id: str, request: VersionNavigateRequest) -> Dict[str, Any]:
+    async def navigate_version(
+        conversation_id: str, 
+        message_id: str, 
+        request: VersionNavigateRequest,
+        db: AsyncSession = Depends(get_db)
+    ) -> Dict[str, Any]:
         """Navigate to a specific version of a message."""
-        if conversation_id not in conversations:
-            raise HTTPException(status_code=404, detail="Conversation not found")
-        
         # Get all versions
-        versions_response = await get_message_versions(conversation_id, message_id)
+        versions_response = await get_message_versions(conversation_id, message_id, db)
         all_versions = versions_response["versions"]
         
         if request.version_index >= len(all_versions):
@@ -501,7 +422,8 @@ def create_app() -> FastAPI:
         
         # Switch to the leaf containing this version
         if selected_version.get("leaf_id"):
-            active_leaves[conversation_id] = selected_version["leaf_id"]
+            leaf_repo = LeafRepository(db)
+            await leaf_repo.set_active(conversation_id, selected_version["leaf_id"])
         
         return {
             "current_version": request.version_index,
@@ -509,13 +431,19 @@ def create_app() -> FastAPI:
         }
     
     @app.get("/v1/conversations/{conversation_id}/messages/{message_id}/editors")
-    async def get_active_editors(conversation_id: str, message_id: str) -> Dict[str, List[str]]:
+    async def get_active_editors(
+        conversation_id: str, 
+        message_id: str,
+        db: AsyncSession = Depends(get_db)
+    ) -> Dict[str, List[str]]:
         """Get list of users currently editing a message."""
-        if conversation_id not in conversations:
+        # Check conversation and message exist
+        conv_repo = ConversationRepository(db)
+        conversation = await conv_repo.get(conversation_id)
+        if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
         
-        # Check message exists
-        message_exists = any(msg.id == message_id for msg in conversations[conversation_id].messages)
+        message_exists = any(msg.id == message_id for msg in conversation.messages)
         if not message_exists:
             raise HTTPException(status_code=404, detail="Message not found")
         
@@ -548,10 +476,13 @@ def create_app() -> FastAPI:
     @app.websocket("/v1/conversations/{conversation_id}/ws")
     async def websocket_endpoint(websocket: WebSocket, conversation_id: str) -> None:
         """WebSocket endpoint for real-time conversation updates."""
-        # Check if conversation exists
-        if conversation_id not in conversations:
-            await websocket.close(code=1008, reason="Conversation not found")
-            return
+        # Check if conversation exists in database
+        async with async_session() as db:
+            conv_repo = ConversationRepository(db)
+            conversation = await conv_repo.get(conversation_id)
+            if not conversation:
+                await websocket.close(code=1008, reason="Conversation not found")
+                return
         
         # Connect
         await manager.connect(websocket, conversation_id)
@@ -578,23 +509,41 @@ def create_app() -> FastAPI:
                         # Validate message
                         ws_msg = WSMessageData(**message_dict)
                         
-                        # Check if author exists in conversation
-                        author_exists = any(
-                            p.id == ws_msg.authorId 
-                            for p in conversations[conversation_id].participants
-                        )
-                        if not author_exists:
-                            error_msg = WSErrorMessage(message="Author not found in conversation participants")
-                            await websocket.send_text(error_msg.model_dump_json())
-                            continue
-                        
-                        # Create and store message
-                        message = Message(
-                            conversation_id=conversation_id,
-                            author_id=ws_msg.authorId,
-                            content=ws_msg.content
-                        )
-                        conversations[conversation_id].messages.append(message)
+                        # Create and store message in database
+                        async with async_session() as db:
+                            conv_repo = ConversationRepository(db)
+                            conversation = await conv_repo.get(conversation_id)
+                            
+                            if not conversation:
+                                error_msg = WSErrorMessage(message="Conversation not found")
+                                await websocket.send_text(error_msg.model_dump_json())
+                                continue
+                            
+                            # Check if author exists in conversation
+                            author_exists = any(
+                                p.id == ws_msg.authorId 
+                                for p in conversation.participants
+                            )
+                            if not author_exists:
+                                error_msg = WSErrorMessage(message="Author not found in conversation participants")
+                                await websocket.send_text(error_msg.model_dump_json())
+                                continue
+                            
+                            # Create and store message
+                            message = Message(
+                                conversation_id=conversation_id,
+                                author_id=ws_msg.authorId,
+                                content=ws_msg.content
+                            )
+                            
+                            # Add to database
+                            leaf_repo = LeafRepository(db)
+                            active_leaf = await leaf_repo.get_active(conversation_id)
+                            await conv_repo.add_message(
+                                conversation_id, 
+                                message, 
+                                active_leaf.id if active_leaf else None
+                            )
                         
                         # Broadcast to all clients
                         broadcast_msg = WSMessageBroadcast(message=message.model_dump())
@@ -662,6 +611,23 @@ def create_app() -> FastAPI:
             if user_count > 0:
                 presence_msg = WSPresenceUpdate(action="left", activeUsers=user_count)
                 await manager.send_to_all(presence_msg.model_dump_json(), conversation_id)
+    
+    # Add Yjs WebSocket relay endpoint for collaborative editing
+    @app.websocket("/ws/collaborative/{room_name}")
+    async def yjs_websocket_endpoint(websocket: WebSocket, room_name: str) -> None:
+        """Simple Yjs WebSocket relay for collaborative editing."""
+        await websocket.accept()
+        
+        # For now, just echo messages back to support Yjs sync
+        # In production, you'd want to implement proper Yjs awareness protocol
+        try:
+            while True:
+                data = await websocket.receive_bytes()
+                # Echo back to the same client for now
+                # In a real implementation, broadcast to all clients in the room
+                await websocket.send_bytes(data)
+        except WebSocketDisconnect:
+            pass
     
     return app
 
