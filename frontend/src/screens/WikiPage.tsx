@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, TextInput } from 'react-native';
 import { extractWikiConcepts } from '../utils/wikiTagParser';
 import WikiText from '../components/WikiText';
@@ -24,10 +24,14 @@ const WikiPage: React.FC<WikiPageProps> = ({ navigation, route }) => {
   const [wikiContent, setWikiContent] = useState<string>('');
   const [isEditing, setIsEditing] = useState(false);
   const [editingContent, setEditingContent] = useState<string>('');
+  const [wikiConversation, setWikiConversation] = useState<any>(null);
+  const [currentUserId] = useState(`wiki-user-${Date.now()}`);
+  const wsRef = useRef<WebSocket | null>(null);
+  const isReceivingUpdateRef = useRef(false);
 
   useEffect(() => {
     loadRelatedMessages();
-    loadWikiContent();
+    loadWikiConversation();
   }, [concept]);
 
   const loadRelatedMessages = async () => {
@@ -73,22 +77,132 @@ const WikiPage: React.FC<WikiPageProps> = ({ navigation, route }) => {
     }
   };
 
-  const loadWikiContent = async () => {
-    // TODO: Load wiki content from backend
-    // For now, just set empty content
-    setWikiContent('');
+  const loadWikiConversation = async () => {
+    try {
+      // Get or create wiki conversation for this concept
+      const response = await fetch(`${API_URL}/v1/wiki/${encodeURIComponent(concept)}`);
+      const wikiConv = await response.json();
+      setWikiConversation(wikiConv);
+      
+      // Set wiki content from the latest message (if any)
+      if (wikiConv.messages && wikiConv.messages.length > 0) {
+        const latestMessage = wikiConv.messages[wikiConv.messages.length - 1];
+        setWikiContent(latestMessage.content);
+      } else {
+        setWikiContent('');
+      }
+      
+      // Connect to WebSocket for real-time collaboration
+      connectWebSocket(wikiConv.id);
+    } catch (error) {
+      console.error('Failed to load wiki conversation:', error);
+    }
   };
+
+  const connectWebSocket = (conversationId: string) => {
+    if (wsRef.current) {
+      wsRef.current.close();
+    }
+
+    const ws = new WebSocket(`ws://localhost:8000/v1/conversations/${conversationId}/ws`);
+    
+    ws.onopen = () => {
+      console.log('🔌 Wiki WebSocket connected');
+    };
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      
+      // Handle message updates
+      if (data.type === 'message') {
+        // Update wiki content if a new message is added
+        setWikiContent(data.message.content);
+      } else if (data.type === 'message_updated') {
+        // Update wiki content if the message is edited
+        setWikiContent(data.content);
+      } else if (data.type === 'text_delta') {
+        // Real-time collaborative editing
+        if (isEditing && data.userId !== currentUserId) {
+          // Apply incoming changes from other users
+          isReceivingUpdateRef.current = true;
+          setEditingContent(data.text);
+          setTimeout(() => {
+            isReceivingUpdateRef.current = false;
+          }, 50);
+        } else if (!isEditing) {
+          // Update displayed content when not editing
+          setWikiContent(data.text);
+        }
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error('Wiki WebSocket error:', error);
+    };
+
+    ws.onclose = () => {
+      console.log('Wiki WebSocket disconnected');
+    };
+
+    wsRef.current = ws;
+  };
+
+  // Cleanup WebSocket on unmount
+  useEffect(() => {
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
+  }, []);
 
   const handleEditWiki = () => {
     setEditingContent(wikiContent);
     setIsEditing(true);
   };
 
-  const handleSaveWiki = () => {
-    setWikiContent(editingContent);
-    setIsEditing(false);
-    // TODO: Save to backend when wiki content persistence is added
-    console.log('Saved wiki content for:', concept, editingContent);
+  const handleSaveWiki = async () => {
+    if (!wikiConversation) return;
+    
+    try {
+      // If this is the first message or updating existing
+      if (wikiConversation.messages.length === 0) {
+        // Create first message in wiki conversation
+        const response = await fetch(`${API_URL}/v1/conversations/${wikiConversation.id}/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            author_id: 'wiki-editor',
+            content: editingContent
+          })
+        });
+        
+        if (response.ok) {
+          setWikiContent(editingContent);
+          setIsEditing(false);
+          // Reload to get updated conversation
+          loadWikiConversation();
+        }
+      } else {
+        // Update existing message
+        const lastMessage = wikiConversation.messages[wikiConversation.messages.length - 1];
+        const response = await fetch(
+          `${API_URL}/v1/conversations/${wikiConversation.id}/messages/${lastMessage.id}`,
+          {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: editingContent })
+          }
+        );
+        
+        if (response.ok) {
+          setWikiContent(editingContent);
+          setIsEditing(false);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to save wiki content:', error);
+    }
   };
 
   const handleCancelEdit = () => {
@@ -148,7 +262,20 @@ const WikiPage: React.FC<WikiPageProps> = ({ navigation, route }) => {
             <TextInput
               style={styles.editingTextArea}
               value={editingContent}
-              onChangeText={setEditingContent}
+              onChangeText={(text) => {
+                setEditingContent(text);
+                // Send real-time updates via WebSocket if not receiving updates
+                if (!isReceivingUpdateRef.current && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                  // Send text_delta for collaborative editing
+                  wsRef.current.send(JSON.stringify({
+                    type: 'text_delta',
+                    messageId: wikiConversation?.messages[0]?.id || 'wiki-new',
+                    userId: currentUserId,
+                    text: text,
+                    cursorPosition: text.length
+                  }));
+                }
+              }}
               placeholder={`Write about ${concept}...`}
               multiline
               autoFocus

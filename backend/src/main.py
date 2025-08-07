@@ -137,6 +137,24 @@ def create_app() -> FastAPI:
         """List all conversations."""
         return {"data": list(conversations.values())}
     
+    @app.get("/v1/wiki/{concept}")
+    async def get_or_create_wiki_conversation(concept: str) -> Conversation:
+        """Get or create a wiki conversation for a concept."""
+        # Check if wiki conversation already exists for this concept
+        wiki_id = f"wiki-{concept.lower().replace(' ', '-')}"
+        
+        if wiki_id not in conversations:
+            # Create new wiki conversation
+            conversations[wiki_id] = Conversation(
+                id=wiki_id,
+                type="wiki",
+                title=concept,
+                participants=[],
+                messages=[]
+            )
+        
+        return conversations[wiki_id]
+    
     @app.post("/v1/conversations", status_code=201)
     async def create_conversation(conversation: Conversation) -> Conversation:
         """Create a new conversation."""

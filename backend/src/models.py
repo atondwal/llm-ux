@@ -42,7 +42,7 @@ class Message(BaseModel):
 class Conversation(BaseModel):
     """The core conversation model - everything is a conversation."""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    type: Literal["chat", "wiki_tag"]
+    type: Literal["chat", "wiki_tag", "wiki"]
     title: str
     participants: List[Participant] = Field(default_factory=list)
     messages: List[Message] = Field(default_factory=list)
