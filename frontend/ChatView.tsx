@@ -19,6 +19,7 @@ export default function App({ navigation }: { navigation?: any }) {
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
   const [aiProactive, setAiProactive] = useState(false);
+  const [lastClickTime, setLastClickTime] = useState<{[key: string]: number}>({});
   
   // Branching state
   const [leaves, setLeaves] = useState<any[]>([]);
@@ -370,6 +371,108 @@ export default function App({ navigation }: { navigation?: any }) {
     }
   };
 
+  // Save current edit
+  const saveEdit = async () => {
+    if (editingMessageId && currentConversation) {
+      try {
+        const response = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/messages/${editingMessageId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            content: editingText,
+            leaf_id: activeLeaf?.id
+          })
+        });
+        
+        if (response.ok) {
+          setMessages(prev => prev.map(m => 
+            m.id === editingMessageId 
+              ? { ...m, content: editingText }
+              : m
+          ));
+          
+          loadMessageVersions(editingMessageId);
+          stopEditing(editingMessageId);
+          setEditingMessageId(null);
+          setEditingText('');
+        }
+      } catch (error) {
+        console.error('Error updating message:', error);
+      }
+    }
+  };
+
+  // Save current edit with Yjs integration
+  const saveEditWithYjs = async () => {
+    if (editingMessageId && currentConversation) {
+      try {
+        // Get final content from Yjs document
+        const finalContent = yTextRef.current ? yTextRef.current.toString() : editingText;
+        
+        const response = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/messages/${editingMessageId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            content: finalContent,
+            leaf_id: activeLeaf?.id
+          })
+        });
+        
+        if (response.ok) {
+          setMessages(prev => prev.map(m => 
+            m.id === editingMessageId 
+              ? { ...m, content: finalContent }
+              : m
+          ));
+          
+          loadMessageVersions(editingMessageId);
+          stopEditing(editingMessageId);
+          setEditingMessageId(null);
+          setEditingText('');
+        }
+      } catch (error) {
+        console.error('Error updating message:', error);
+      }
+    }
+  };
+
+  // Cancel current edit
+  const cancelEdit = () => {
+    if (editingMessageId) {
+      // Revert to original content
+      const originalMessage = messages.find(m => m.id === editingMessageId);
+      if (originalMessage && yTextRef.current) {
+        // Reset Yjs document to original content
+        ydocRef.current?.transact(() => {
+          yTextRef.current?.delete(0, yTextRef.current.length);
+          yTextRef.current?.insert(0, originalMessage.content);
+        });
+        setEditingText(originalMessage.content);
+      }
+      
+      stopEditing(editingMessageId);
+      setEditingMessageId(null);
+      setEditingText('');
+    }
+  };
+
+  // Handle double-click detection
+  const handleDoubleClick = (messageId: string, messageContent: string) => {
+    const now = Date.now();
+    const lastClick = lastClickTime[messageId] || 0;
+    const timeDiff = now - lastClick;
+    
+    setLastClickTime(prev => ({ ...prev, [messageId]: now }));
+    
+    // If clicked within 500ms, it's a double click
+    if (timeDiff < 500 && timeDiff > 50) {
+      // Start editing
+      setEditingMessageId(messageId);
+      setEditingText(messageContent);
+      startEditing(messageId);
+    }
+  };
+
   if (loading) {
     return (
       <View style={[styles.container, styles.centered]}>
@@ -479,147 +582,86 @@ export default function App({ navigation }: { navigation?: any }) {
               
               {/* Document-style content for others, floating overlay for own messages */}
               {isOwn ? (
-                <TouchableOpacity
-                  style={styles.floatingMessage}
-                  onLongPress={async () => {
-                  // Check if this is not the last message (editing old message)
-                  const isOldMessage = index < messages.length - 1;
-                  
-                  if (isOldMessage) {
-                    // Create a new branch/leaf
-                    const response = await fetch(
-                      `${API_URL}/v1/conversations/${currentConversation.id}/leaves`,
-                      {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                          branch_from_message_id: msg.id,
-                          name: `edit-${msg.id.slice(0, 8)}`
-                        })
-                      }
-                    );
-                    
-                    if (response.ok) {
-                      const newLeaf = await response.json();
-                      setActiveLeaf(newLeaf);
-                      
-                      // Reload leaves
-                      const leavesResponse = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/leaves`);
-                      const leavesData = await leavesResponse.json();
-                      setLeaves(leavesData.leaves || []);
-                      
-                      // Switch active leaf on backend
-                      await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/leaves/active`, {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ leaf_id: newLeaf.id })
-                      });
-                      
-                      // Reload messages for the new leaf
-                      const messagesResponse = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/messages?leaf_id=${newLeaf.id}`);
-                      const messagesData = await messagesResponse.json();
-                      setMessages(messagesData.data || []);
-                    }
-                  }
-                  
-                  setEditingMessageId(msg.id);
-                  setEditingText(msg.content);
-                  startEditing(msg.id);
-                }}
-                >
-                  <WikiText 
-                    text={msg.content}
-                    textStyle={styles.floatingMessageText}
-                    wikiTagStyle={{
-                      color: '#6366f1',
-                      textDecorationLine: 'none',
-                      fontWeight: '500',
-                      backgroundColor: 'rgba(99, 102, 241, 0.1)',
-                      paddingHorizontal: 2,
-                      paddingVertical: 1,
-                      borderRadius: 3
-                    }}
-                    onWikiTagPress={(concept) => {
-                      if (navigation) {
-                        navigation.navigate('WikiPage', { concept });
-                      }
-                    }}
-                  />
-                  {editingSessions.some(s => s.messageId === msg.id) && (
-                    <Text style={styles.floatingEditIndicator}>✏️ editing</Text>
-                  )}
-                </TouchableOpacity>
-              ) : (
-                <TouchableOpacity
-                  style={styles.documentContent}
-                  onLongPress={async () => {
-                    // Check if this is not the last message (editing old message)
-                    const isOldMessage = index < messages.length - 1;
-                    
-                    if (isOldMessage) {
-                      // Create a new branch/leaf
-                      const response = await fetch(
-                        `${API_URL}/v1/conversations/${currentConversation.id}/leaves`,
-                        {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({
-                            branch_from_message_id: msg.id,
-                            name: `edit-${msg.id.slice(0, 8)}`
-                          })
+                editingMessageId === msg.id ? (
+                  <View style={styles.inlineFloatingEditor}>
+                    <TextInput
+                      style={styles.floatingEditInput}
+                      value={editingText}
+                      onChangeText={handleEditingTextChange}
+                      onKeyPress={(e) => {
+                        if (e.nativeEvent.key === 'Escape') {
+                          cancelEdit();
+                        } else if (e.nativeEvent.key === 'Enter' && !e.nativeEvent.shiftKey) {
+                          e.preventDefault();
+                          saveEditWithYjs();
                         }
-                      );
+                      }}
+                      multiline
+                      autoFocus
+                      placeholder="Edit your message..."
+                    />
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.floatingMessage}
+                    onPress={() => handleDoubleClick(msg.id, msg.content)}
+                    onLongPress={async () => {
+                      // Check if this is not the last message (editing old message)
+                      const isOldMessage = index < messages.length - 1;
                       
-                      if (response.ok) {
-                        const newLeaf = await response.json();
-                        setActiveLeaf(newLeaf);
+                      if (isOldMessage) {
+                        // Create a new branch/leaf
+                        const response = await fetch(
+                          `${API_URL}/v1/conversations/${currentConversation.id}/leaves`,
+                          {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              branch_from_message_id: msg.id,
+                              name: `edit-${msg.id.slice(0, 8)}`
+                            })
+                          }
+                        );
                         
-                        // Reload leaves
-                        const leavesResponse = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/leaves`);
-                        const leavesData = await leavesResponse.json();
-                        setLeaves(leavesData.leaves || []);
-                        
-                        // Switch active leaf on backend
-                        await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/leaves/active`, {
-                          method: 'PUT',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ leaf_id: newLeaf.id })
-                        });
-                        
-                        // Reload messages for the new leaf
-                        const messagesResponse = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/messages?leaf_id=${newLeaf.id}`);
-                        const messagesData = await messagesResponse.json();
-                        setMessages(messagesData.data || []);
+                        if (response.ok) {
+                          const newLeaf = await response.json();
+                          setActiveLeaf(newLeaf);
+                          
+                          // Reload leaves
+                          const leavesResponse = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/leaves`);
+                          const leavesData = await leavesResponse.json();
+                          setLeaves(leavesData.leaves || []);
+                          
+                          // Switch active leaf on backend
+                          await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/leaves/active`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ leaf_id: newLeaf.id })
+                          });
+                          
+                          // Reload messages for the new leaf
+                          const messagesResponse = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/messages?leaf_id=${newLeaf.id}`);
+                          const messagesData = await messagesResponse.json();
+                          setMessages(messagesData.data || []);
+                        }
                       }
-                    }
-                    
-                    setEditingMessageId(msg.id);
-                    setEditingText(msg.content);
-                    startEditing(msg.id);
-                  }}
-                >
-                  {showAuthor && (
-                    <View style={styles.documentHeader}>
-                      <Text style={styles.documentAuthor}>
-                        {msg.author_id === 'ai-1' ? 'Assistant' : 'User'}
-                      </Text>
-                    </View>
-                  )}
-                  
-                  <View style={styles.documentBody}>
+                      
+                      setEditingMessageId(msg.id);
+                      setEditingText(msg.content);
+                      startEditing(msg.id);
+                    }}
+                  >
                     <WikiText 
                       text={msg.content}
-                      textStyle={styles.documentText}
+                      textStyle={styles.floatingMessageText}
                       wikiTagStyle={{
-                        color: '#2563eb',
+                        color: '#6366f1',
                         textDecorationLine: 'none',
                         fontWeight: '500',
-                        backgroundColor: '#eff6ff',
-                        paddingHorizontal: 3,
+                        backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                        paddingHorizontal: 2,
                         paddingVertical: 1,
-                        borderRadius: 3,
-                        // Ensure proper text baseline alignment
-                        textAlignVertical: 'center'
+                        borderRadius: 3
                       }}
                       onWikiTagPress={(concept) => {
                         if (navigation) {
@@ -627,12 +669,132 @@ export default function App({ navigation }: { navigation?: any }) {
                         }
                       }}
                     />
+                    {editingSessions.some(s => s.messageId === msg.id) && (
+                      <Text style={styles.floatingEditIndicator}>✏️ editing</Text>
+                    )}
+                  </TouchableOpacity>
+                )
+              ) : (
+                editingMessageId === msg.id ? (
+                  <View style={styles.documentContent}>
+                    {showAuthor && (
+                      <View style={styles.documentHeader}>
+                        <Text style={styles.documentAuthor}>
+                          {msg.author_id === 'ai-1' ? 'Assistant' : 'User'}
+                        </Text>
+                      </View>
+                    )}
+                    
+                    <View style={styles.inlineEditor}>
+                      <TextInput
+                        style={styles.inlineEditInput}
+                        value={editingText}
+                        onChangeText={handleEditingTextChange}
+                        onKeyPress={(e) => {
+                          if (e.nativeEvent.key === 'Escape') {
+                            cancelEdit();
+                          } else if (e.nativeEvent.key === 'Enter' && !e.nativeEvent.shiftKey) {
+                            e.preventDefault();
+                            saveEditWithYjs();
+                          }
+                        }}
+                        multiline
+                        autoFocus
+                        placeholder="Edit your message..."
+                      />
+                      
+                      {editingMessageId && editingSessions.filter(s => s.messageId === editingMessageId && s.userId !== currentUserId).length > 0 && (
+                        <Text style={styles.inlineCollaborators}>
+                          👥 Also editing: {editingSessions.filter(s => s.messageId === editingMessageId && s.userId !== currentUserId).map(s => s.userId).join(', ')}
+                        </Text>
+                      )}
+                    </View>
                   </View>
-                  
-                  {editingSessions.some(s => s.messageId === msg.id) && (
-                    <Text style={styles.documentEditIndicator}>currently being edited</Text>
-                  )}
-                </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.documentContent}
+                    onPress={() => handleDoubleClick(msg.id, msg.content)}
+                    onLongPress={async () => {
+                      // Check if this is not the last message (editing old message)
+                      const isOldMessage = index < messages.length - 1;
+                      
+                      if (isOldMessage) {
+                        // Create a new branch/leaf
+                        const response = await fetch(
+                          `${API_URL}/v1/conversations/${currentConversation.id}/leaves`,
+                          {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              branch_from_message_id: msg.id,
+                              name: `edit-${msg.id.slice(0, 8)}`
+                            })
+                          }
+                        );
+                        
+                        if (response.ok) {
+                          const newLeaf = await response.json();
+                          setActiveLeaf(newLeaf);
+                          
+                          // Reload leaves
+                          const leavesResponse = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/leaves`);
+                          const leavesData = await leavesResponse.json();
+                          setLeaves(leavesData.leaves || []);
+                          
+                          // Switch active leaf on backend
+                          await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/leaves/active`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ leaf_id: newLeaf.id })
+                          });
+                          
+                          // Reload messages for the new leaf
+                          const messagesResponse = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/messages?leaf_id=${newLeaf.id}`);
+                          const messagesData = await messagesResponse.json();
+                          setMessages(messagesData.data || []);
+                        }
+                      }
+                      
+                      setEditingMessageId(msg.id);
+                      setEditingText(msg.content);
+                      startEditing(msg.id);
+                    }}
+                  >
+                    {showAuthor && (
+                      <View style={styles.documentHeader}>
+                        <Text style={styles.documentAuthor}>
+                          {msg.author_id === 'ai-1' ? 'Assistant' : 'User'}
+                        </Text>
+                      </View>
+                    )}
+                    
+                    <View style={styles.documentBody}>
+                      <WikiText 
+                        text={msg.content}
+                        textStyle={styles.documentText}
+                        wikiTagStyle={{
+                          color: '#2563eb',
+                          textDecorationLine: 'none',
+                          fontWeight: '500',
+                          backgroundColor: '#eff6ff',
+                          paddingHorizontal: 3,
+                          paddingVertical: 1,
+                          borderRadius: 3,
+                          textAlignVertical: 'center'
+                        }}
+                        onWikiTagPress={(concept) => {
+                          if (navigation) {
+                            navigation.navigate('WikiPage', { concept });
+                          }
+                        }}
+                      />
+                    </View>
+                    
+                    {editingSessions.some(s => s.messageId === msg.id) && (
+                      <Text style={styles.documentEditIndicator}>currently being edited</Text>
+                    )}
+                  </TouchableOpacity>
+                )
               )}
             </View>
           );
@@ -652,78 +814,6 @@ export default function App({ navigation }: { navigation?: any }) {
         </TouchableOpacity>
       </View>
 
-      {editingMessageId && (
-        <View style={styles.editingOverlay}>
-          <View style={styles.editingModal}>
-            <Text style={styles.editingTitle}>Edit Message (Yjs CRDT)</Text>
-            
-            {editingMessageId && editingSessions.filter(s => s.messageId === editingMessageId && s.userId !== currentUserId).length > 0 && (
-              <View style={styles.collaboratorsContainer}>
-                <Text style={styles.collaboratorsLabel}>
-                  👥 Also editing: {editingSessions.filter(s => s.messageId === editingMessageId && s.userId !== currentUserId).map(s => s.userId).join(', ')}
-                </Text>
-              </View>
-            )}
-            
-            <TextInput
-              style={styles.editingInput}
-              value={editingText}
-              onChangeText={handleEditingTextChange}
-              multiline
-              autoFocus
-            />
-            <View style={styles.editingButtons}>
-              <TouchableOpacity 
-                style={[styles.editingButton, styles.cancelButton]} 
-                onPress={() => {
-                  stopEditing(editingMessageId);
-                  setEditingMessageId(null);
-                  setEditingText('');
-                }}
-              >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.editingButton, styles.saveButton]} 
-                onPress={async () => {
-                  if (editingMessageId && currentConversation) {
-                    try {
-                      const response = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/messages/${editingMessageId}`, {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                          content: editingText,
-                          leaf_id: activeLeaf?.id
-                        })
-                      });
-                      
-                      if (response.ok) {
-                        // Update the message locally
-                        setMessages(prev => prev.map(msg => 
-                          msg.id === editingMessageId 
-                            ? { ...msg, content: editingText }
-                            : msg
-                        ));
-                        
-                        // Reload versions for this message
-                        loadMessageVersions(editingMessageId);
-                        
-                        stopEditing(editingMessageId);
-                        setEditingMessageId(null);
-                        setEditingText('');
-                      }
-                    } catch (error) {
-                      console.error('Error updating message:', error);
-                    }
-                  }
-                }}
-              >
-                <Text style={styles.saveButtonText}>Save</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      )}
 
       <StatusBar style="auto" />
     </View>
@@ -886,17 +976,15 @@ const styles = StyleSheet.create({
   // Subtle overlay for own messages
   floatingMessage: {
     backgroundColor: 'rgba(255, 255, 255, 0.85)', // Very subtle white
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 16,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: 20,
+    borderBottomRightRadius: 4, // Teardrop effect
     maxWidth: '65%',
     borderWidth: 1,
     borderColor: 'rgba(0, 0, 0, 0.08)',
     // Minimal shadow
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
+    boxShadow: '0 1px 3px rgba(0, 0, 0, 0.05)',
     elevation: 2,
   },
   floatingMessageText: {
@@ -949,9 +1037,59 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40,
     paddingBottom: 20,
   },
-  // Removed - using new floating/document styles
-  // Removed - using specific text styles for each type
-  // Removed - using specific edit indicators for each type
+  
+  // Inline editing styles
+  inlineEditor: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 8,
+    padding: 16,
+    borderWidth: 2,
+    borderColor: '#e2e8f0',
+  },
+  inlineEditInput: {
+    fontSize: 18,
+    lineHeight: 32,
+    color: '#111827',
+    letterSpacing: -0.2,
+    fontWeight: '400',
+    minHeight: 60,
+    textAlignVertical: 'top',
+    backgroundColor: 'transparent',
+  },
+  inlineCollaborators: {
+    fontSize: 12,
+    color: '#059669',
+    fontStyle: 'italic',
+    marginBottom: 12,
+    backgroundColor: '#ecfdf5',
+    padding: 8,
+    borderRadius: 4,
+    borderLeftWidth: 3,
+    borderLeftColor: '#10b981',
+  },
+  
+  // Floating message inline editing
+  inlineFloatingEditor: {
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 20,
+    borderBottomRightRadius: 4,
+    maxWidth: '70%',
+    borderWidth: 2,
+    borderColor: '#3b82f6',
+    boxShadow: '0 2px 6px rgba(0, 0, 0, 0.1)',
+    elevation: 4,
+  },
+  floatingEditInput: {
+    fontSize: 14,
+    lineHeight: 19,
+    color: '#374151',
+    fontWeight: '400',
+    minHeight: 40,
+    textAlignVertical: 'top',
+    backgroundColor: 'transparent',
+  },
   inputContainer: {
     flexDirection: 'row',
     padding: 10,
@@ -977,78 +1115,6 @@ const styles = StyleSheet.create({
   sendButtonText: {
     color: 'white',
     fontWeight: 'bold',
-  },
-  editingOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  editingModal: {
-    backgroundColor: 'white',
-    borderRadius: 10,
-    padding: 20,
-    margin: 20,
-    width: '80%',
-    maxWidth: 400,
-  },
-  editingTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 15,
-    textAlign: 'center',
-  },
-  editingInput: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    padding: 12,
-    minHeight: 80,
-    fontSize: 16,
-    textAlignVertical: 'top',
-  },
-  editingButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 15,
-  },
-  editingButton: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginHorizontal: 5,
-  },
-  cancelButton: {
-    backgroundColor: '#f0f0f0',
-  },
-  saveButton: {
-    backgroundColor: '#007AFF',
-  },
-  cancelButtonText: {
-    color: '#333',
-    fontWeight: 'bold',
-  },
-  saveButtonText: {
-    color: 'white',
-    fontWeight: 'bold',
-  },
-  collaboratorsContainer: {
-    backgroundColor: '#e8f5e8',
-    padding: 8,
-    borderRadius: 4,
-    marginBottom: 10,
-    borderLeftWidth: 3,
-    borderLeftColor: '#4caf50',
-  },
-  collaboratorsLabel: {
-    fontSize: 12,
-    color: '#2e7d32',
-    fontWeight: '500',
   },
   versionNav: {
     flexDirection: 'row',
