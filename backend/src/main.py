@@ -238,6 +238,21 @@ def create_app() -> FastAPI:
         )
         return response
     
+    @app.websocket("/ws/collaborative/{document_id}")
+    async def yjs_websocket_endpoint(websocket: WebSocket, document_id: str) -> None:
+        """WebSocket endpoint for Yjs collaborative editing."""
+        await websocket.accept()
+        
+        # Simple echo server for Yjs - in production you'd want persistent document storage
+        try:
+            while True:
+                data = await websocket.receive_bytes()
+                # Echo the message to all other clients (basic Yjs sync)
+                # In production, you'd store document state and sync properly
+                await manager.broadcast(data.hex(), document_id, exclude=websocket)
+        except WebSocketDisconnect:
+            pass
+    
     @app.websocket("/v1/conversations/{conversation_id}/ws")
     async def websocket_endpoint(websocket: WebSocket, conversation_id: str) -> None:
         """WebSocket endpoint for real-time conversation updates."""
