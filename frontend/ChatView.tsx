@@ -2,7 +2,7 @@ import { StatusBar } from 'expo-status-bar';
 import { StyleSheet, View, Text, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, Modal } from 'react-native';
 import { useState, useEffect, useRef } from 'react';
 import WikiText from './src/components/WikiText';
-import CollaborativeEditor from './src/components/CollaborativeEditor';
+import DocumentView from './src/components/DocumentView';
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
 
@@ -399,13 +399,14 @@ export default function App({ navigation }: { navigation?: any }) {
               <Text style={styles.closeButtonText}>✕</Text>
             </TouchableOpacity>
           </View>
-          <CollaborativeEditor
-            documentId={currentConversation.id}
-            userId={currentUserId}
-            userName={`User-${currentUserId}`}
-            initialContent={messages.map(m => `${m.author_id}: ${m.content}`).join('\n\n')}
-            onContentChange={(content) => {
-              console.log('Document content changed:', content);
+          <DocumentView
+            messages={messages}
+            activeLeaf={activeLeaf}
+            conversationId={currentConversation.id}
+            currentUserId={currentUserId}
+            onBranchCreated={(branchName) => {
+              console.log('Branch created:', branchName);
+              // Could show a notification here
             }}
           />
         </View>
