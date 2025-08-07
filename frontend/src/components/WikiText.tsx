@@ -24,36 +24,31 @@ const WikiText: React.FC<WikiTextProps> = ({
   }
 
   return (
-    <View style={[{ flexDirection: 'row', flexWrap: 'wrap' }, containerStyle]}>
+    <Text style={[textStyle, containerStyle]}>
       {segments.map((segment, index) => {
         if (segment.type === 'text') {
-          return (
-            <Text key={index} style={textStyle}>
-              {segment.content}
-            </Text>
-          );
+          return segment.content;
         } else {
-          // Wiki tag
+          // Wiki tag - render as inline text with press handling
           return (
-            <TouchableOpacity
+            <Text 
               key={index}
-              onPress={() => onWikiTagPress?.(segment.content)}
-            >
-              <Text style={[
+              style={[
                 {
                   color: '#007AFF',
                   textDecorationLine: 'underline',
                   fontWeight: '500'
                 },
                 wikiTagStyle
-              ]}>
-                {segment.content}
-              </Text>
-            </TouchableOpacity>
+              ]}
+              onPress={() => onWikiTagPress?.(segment.content)}
+            >
+              {segment.content}
+            </Text>
           );
         }
       })}
-    </View>
+    </Text>
   );
 };
 

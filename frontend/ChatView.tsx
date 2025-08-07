@@ -446,12 +446,6 @@ export default function App({ navigation }: { navigation?: any }) {
               styles.messageGroup,
               isOwn ? styles.ownMessageGroup : styles.otherMessageGroup
             ]}>
-              {!isOwn && showAuthor && (
-                <Text style={styles.authorLabel}>
-                  {msg.author_id === 'ai-1' ? 'Assistant' : 'User'}
-                </Text>
-              )}
-              
               {/* Version navigation */}
               {hasVersions && (
                 <View style={styles.versionNav}>
@@ -483,12 +477,11 @@ export default function App({ navigation }: { navigation?: any }) {
                 </View>
               )}
               
-              <TouchableOpacity
-                style={[
-                  styles.message,
-                  isOwn ? styles.ownMessage : styles.otherMessage
-                ]}
-                onLongPress={async () => {
+              {/* Document-style content for others, floating overlay for own messages */}
+              {isOwn ? (
+                <TouchableOpacity
+                  style={styles.floatingMessage}
+                  onLongPress={async () => {
                   // Check if this is not the last message (editing old message)
                   const isOldMessage = index < messages.length - 1;
                   
@@ -533,28 +526,114 @@ export default function App({ navigation }: { navigation?: any }) {
                   setEditingText(msg.content);
                   startEditing(msg.id);
                 }}
-              >
-                <WikiText 
-                  text={msg.content}
-                  textStyle={[
-                    styles.messageText, 
-                    isOwn ? styles.ownMessageText : styles.otherMessageText
-                  ]}
-                  wikiTagStyle={{
-                    color: isOwn ? '#4A90E2' : '#007AFF',
-                    textDecorationLine: 'underline',
-                    fontWeight: '600'
-                  }}
-                  onWikiTagPress={(concept) => {
-                    if (navigation) {
-                      navigation.navigate('WikiPage', { concept });
+                >
+                  <WikiText 
+                    text={msg.content}
+                    textStyle={styles.floatingMessageText}
+                    wikiTagStyle={{
+                      color: '#6366f1',
+                      textDecorationLine: 'none',
+                      fontWeight: '500',
+                      backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                      paddingHorizontal: 2,
+                      paddingVertical: 1,
+                      borderRadius: 3
+                    }}
+                    onWikiTagPress={(concept) => {
+                      if (navigation) {
+                        navigation.navigate('WikiPage', { concept });
+                      }
+                    }}
+                  />
+                  {editingSessions.some(s => s.messageId === msg.id) && (
+                    <Text style={styles.floatingEditIndicator}>✏️ editing</Text>
+                  )}
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={styles.documentContent}
+                  onLongPress={async () => {
+                    // Check if this is not the last message (editing old message)
+                    const isOldMessage = index < messages.length - 1;
+                    
+                    if (isOldMessage) {
+                      // Create a new branch/leaf
+                      const response = await fetch(
+                        `${API_URL}/v1/conversations/${currentConversation.id}/leaves`,
+                        {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            branch_from_message_id: msg.id,
+                            name: `edit-${msg.id.slice(0, 8)}`
+                          })
+                        }
+                      );
+                      
+                      if (response.ok) {
+                        const newLeaf = await response.json();
+                        setActiveLeaf(newLeaf);
+                        
+                        // Reload leaves
+                        const leavesResponse = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/leaves`);
+                        const leavesData = await leavesResponse.json();
+                        setLeaves(leavesData.leaves || []);
+                        
+                        // Switch active leaf on backend
+                        await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/leaves/active`, {
+                          method: 'PUT',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ leaf_id: newLeaf.id })
+                        });
+                        
+                        // Reload messages for the new leaf
+                        const messagesResponse = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/messages?leaf_id=${newLeaf.id}`);
+                        const messagesData = await messagesResponse.json();
+                        setMessages(messagesData.data || []);
+                      }
                     }
+                    
+                    setEditingMessageId(msg.id);
+                    setEditingText(msg.content);
+                    startEditing(msg.id);
                   }}
-                />
-                {editingSessions.some(s => s.messageId === msg.id) && (
-                  <Text style={styles.editIndicator}>✏️ Being edited</Text>
-                )}
-              </TouchableOpacity>
+                >
+                  {showAuthor && (
+                    <View style={styles.documentHeader}>
+                      <Text style={styles.documentAuthor}>
+                        {msg.author_id === 'ai-1' ? 'Assistant' : 'User'}
+                      </Text>
+                    </View>
+                  )}
+                  
+                  <View style={styles.documentBody}>
+                    <WikiText 
+                      text={msg.content}
+                      textStyle={styles.documentText}
+                      wikiTagStyle={{
+                        color: '#2563eb',
+                        textDecorationLine: 'none',
+                        fontWeight: '500',
+                        backgroundColor: '#eff6ff',
+                        paddingHorizontal: 3,
+                        paddingVertical: 1,
+                        borderRadius: 3,
+                        // Ensure proper text baseline alignment
+                        textAlignVertical: 'center'
+                      }}
+                      onWikiTagPress={(concept) => {
+                        if (navigation) {
+                          navigation.navigate('WikiPage', { concept });
+                        }
+                      }}
+                    />
+                  </View>
+                  
+                  {editingSessions.some(s => s.messageId === msg.id) && (
+                    <Text style={styles.documentEditIndicator}>currently being edited</Text>
+                  )}
+                </TouchableOpacity>
+              )}
             </View>
           );
         })}
@@ -654,7 +733,7 @@ export default function App({ navigation }: { navigation?: any }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#fafafa', // Subtle off-white background
   },
   headerLeft: {
     flexDirection: 'row',
@@ -788,58 +867,91 @@ const styles = StyleSheet.create({
   },
   messages: {
     flex: 1,
-    padding: 10,
+    paddingHorizontal: 0, // No side padding for document feel
+    paddingVertical: 20,
   },
   messageGroup: {
-    marginVertical: 2,
+    marginVertical: 0, // Minimal spacing between messages
   },
   ownMessageGroup: {
     alignItems: 'flex-end',
+    paddingHorizontal: 20,
+    marginVertical: 16,
   },
   otherMessageGroup: {
-    alignItems: 'flex-start',
+    alignItems: 'stretch',
+    marginVertical: 0,
   },
-  authorLabel: {
-    fontSize: 12,
-    color: '#666',
-    marginBottom: 4,
-    marginLeft: 12,
-    fontWeight: '500',
-  },
-  message: {
-    padding: 12,
-    marginVertical: 1,
-    borderRadius: 18,
-    maxWidth: '75%',
-    minWidth: '20%',
+  // Removed - using new document header instead
+  // Subtle overlay for own messages
+  floatingMessage: {
+    backgroundColor: 'rgba(255, 255, 255, 0.85)', // Very subtle white
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 16,
+    maxWidth: '65%',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.08)',
+    // Minimal shadow
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 1,
-    elevation: 1,
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 2,
   },
-  ownMessage: {
-    backgroundColor: '#007AFF',
-    borderBottomRightRadius: 6,
+  floatingMessageText: {
+    color: '#374151', // Subtle dark gray
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: '400',
   },
-  otherMessage: {
-    backgroundColor: '#F1F1F1',
-    borderBottomLeftRadius: 6,
-  },
-  messageText: {
-    color: '#000',
-  },
-  ownMessageText: {
-    color: 'white',
-  },
-  otherMessageText: {
-    color: '#000',
-  },
-  editIndicator: {
+  floatingEditIndicator: {
+    color: 'rgba(107, 114, 128, 0.6)',
     fontSize: 10,
-    marginTop: 5,
-    opacity: 0.7,
+    fontStyle: 'italic',
+    marginTop: 3,
   },
+  
+  // Document-style content for others
+  documentContent: {
+    backgroundColor: '#ffffff',
+    paddingVertical: 0,
+    marginVertical: 0,
+  },
+  documentHeader: {
+    paddingHorizontal: 40,
+    paddingTop: 40,
+    paddingBottom: 8,
+  },
+  documentAuthor: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#6b7280',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  documentBody: {
+    paddingHorizontal: 40,
+    paddingBottom: 40,
+  },
+  documentText: {
+    fontSize: 18,
+    lineHeight: 32,
+    color: '#111827',
+    letterSpacing: -0.2,
+    fontWeight: '400',
+  },
+  documentEditIndicator: {
+    fontSize: 13,
+    color: '#9ca3af',
+    fontStyle: 'italic',
+    marginTop: 16,
+    paddingHorizontal: 40,
+    paddingBottom: 20,
+  },
+  // Removed - using new floating/document styles
+  // Removed - using specific text styles for each type
+  // Removed - using specific edit indicators for each type
   inputContainer: {
     flexDirection: 'row',
     padding: 10,
