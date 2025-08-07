@@ -28,6 +28,13 @@ const WikiPage: React.FC<WikiPageProps> = ({ navigation, route }) => {
   const [currentUserId] = useState(`wiki-user-${Date.now()}`);
   const wsRef = useRef<WebSocket | null>(null);
   const isReceivingUpdateRef = useRef(false);
+  const isEditingRef = useRef(false);
+  const textDeltaTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Keep ref in sync with state
+  useEffect(() => {
+    isEditingRef.current = isEditing;
+  }, [isEditing]);
 
   useEffect(() => {
     loadRelatedMessages();
@@ -111,14 +118,14 @@ const WikiPage: React.FC<WikiPageProps> = ({ navigation, route }) => {
         setWikiContent(data.content);
       } else if (data.type === 'text_delta') {
         // Real-time collaborative editing
-        if (isEditing && data.userId !== currentUserId) {
+        if (isEditingRef.current && data.userId !== currentUserId) {
           // Apply incoming changes from other users
           isReceivingUpdateRef.current = true;
           setEditingContent(data.text);
           setTimeout(() => {
             isReceivingUpdateRef.current = false;
           }, 50);
-        } else if (!isEditing) {
+        } else if (!isEditingRef.current) {
           // Update displayed content when not editing
           setWikiContent(data.text);
         }
@@ -198,6 +205,33 @@ const WikiPage: React.FC<WikiPageProps> = ({ navigation, route }) => {
     setIsEditing(false);
   };
 
+  // Send text_delta with debouncing
+  const sendTextDelta = (text: string) => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    
+    // Clear existing timeout
+    if (textDeltaTimeoutRef.current) {
+      clearTimeout(textDeltaTimeoutRef.current);
+    }
+    
+    // Debounce text updates
+    textDeltaTimeoutRef.current = setTimeout(() => {
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        const messageId = wikiConversation?.messages?.[0]?.id || `wiki-${concept}-draft`;
+        const message = {
+          type: 'text_delta',
+          messageId: messageId,
+          userId: currentUserId,
+          text: text,
+          cursorPosition: text.length
+        };
+        wsRef.current.send(JSON.stringify(message));
+      }
+    }, 150); // 150ms debounce
+  };
+
   const handleWikiTagPress = (taggedConcept: string) => {
     // Navigate to another wiki page
     navigation.push('WikiPage', { concept: taggedConcept });
@@ -253,15 +287,8 @@ const WikiPage: React.FC<WikiPageProps> = ({ navigation, route }) => {
               onChangeText={(text) => {
                 setEditingContent(text);
                 // Send real-time updates via WebSocket if not receiving updates
-                if (!isReceivingUpdateRef.current && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                  // Send text_delta for collaborative editing
-                  wsRef.current.send(JSON.stringify({
-                    type: 'text_delta',
-                    messageId: wikiConversation?.messages[0]?.id || 'wiki-new',
-                    userId: currentUserId,
-                    text: text,
-                    cursorPosition: text.length
-                  }));
+                if (!isReceivingUpdateRef.current) {
+                  sendTextDelta(text);
                 }
               }}
               placeholder={`Write about ${concept}...`}
