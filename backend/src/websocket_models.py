@@ -98,3 +98,26 @@ class WSEditingStopped(BaseModel):
     
     class Config:
         populate_by_name = True
+
+
+class WSTextDelta(BaseModel):
+    """Real-time text change for collaborative editing."""
+    type: Literal["text_delta"] = "text_delta"
+    messageId: str = Field(..., alias="messageId")
+    userId: str = Field(..., alias="userId")
+    text: str  # The current full text content
+    cursorPosition: int = Field(..., alias="cursorPosition")  # Cursor position after edit
+    
+    class Config:
+        populate_by_name = True
+
+
+class WSCursorMove(BaseModel):
+    """Cursor position update for showing where others are editing."""
+    type: Literal["cursor_move"] = "cursor_move"
+    messageId: str = Field(..., alias="messageId")
+    userId: str = Field(..., alias="userId")
+    cursorPosition: int = Field(..., alias="cursorPosition")
+    
+    class Config:
+        populate_by_name = True
