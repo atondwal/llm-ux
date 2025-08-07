@@ -390,18 +390,28 @@ def create_app() -> FastAPI:
         
         # If new content provided, create a new version for the message
         if request.new_content:
+            # Get the author from the original message
+            author_id = "unknown"
+            conversation = conversations[conversation_id]
+            for msg in conversation.messages:
+                if msg.id == request.branch_from_message_id:
+                    author_id = msg.author_id
+                    break
+            
             # Create new version
-            existing_versions = message_versions.get(request.branch_from_message_id, [])
             new_version = MessageVersion(
-                message_id=request.branch_from_message_id,
-                leaf_id=new_leaf.id,
                 content=request.new_content,
-                version_number=len(existing_versions)
+                author_id=author_id,
+                leaf_id=new_leaf.id
             )
             
             if request.branch_from_message_id not in message_versions:
                 message_versions[request.branch_from_message_id] = []
+            
+            # Add version and track its index in the leaf
+            version_index = len(message_versions[request.branch_from_message_id])
             message_versions[request.branch_from_message_id].append(new_version)
+            new_leaf.message_versions[request.branch_from_message_id] = version_index
         
         return new_leaf
     

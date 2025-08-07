@@ -289,10 +289,10 @@ class TestCopyOnWrite:
         messages = messages_response.json()
         
         # First message should be edited
-        assert messages["messages"][0]["content"] == "Hey there AI!"
+        assert messages["data"][0]["content"] == "Hey there AI!"
         
         # Rest should be copied (but only up to branch point)
-        assert len(messages["messages"]) == 1  # Only the edited message
+        assert len(messages["data"]) == 1  # Only the edited message
     
     def test_new_messages_go_to_active_leaf(self, client, conversation_with_messages):
         """New messages should be added to the currently active leaf."""
@@ -327,4 +327,4 @@ class TestCopyOnWrite:
         ).json()
         
         # Main leaf shouldn't have the new message
-        assert not any(m["id"] == new_msg["id"] for m in main_messages.get("messages", []))
+        assert not any(m["id"] == new_msg["id"] for m in main_messages.get("data", []))
