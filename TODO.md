@@ -1,4 +1,3 @@
-[ ] living document
 [ ] database
 [ ] multiple convos + selector
 [ ] style

@@ -2,7 +2,6 @@ import { StatusBar } from 'expo-status-bar';
 import { StyleSheet, View, Text, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, Modal } from 'react-native';
 import { useState, useEffect, useRef } from 'react';
 import WikiText from './src/components/WikiText';
-import DocumentView from './src/components/DocumentView';
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
 
@@ -20,7 +19,6 @@ export default function App({ navigation }: { navigation?: any }) {
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
   const [aiProactive, setAiProactive] = useState(false);
-  const [showCollaborativeView, setShowCollaborativeView] = useState(false);
   
   // Branching state
   const [leaves, setLeaves] = useState<any[]>([]);
@@ -381,38 +379,6 @@ export default function App({ navigation }: { navigation?: any }) {
     );
   }
 
-  // Collaborative Document View Modal
-  if (showCollaborativeView && currentConversation) {
-    return (
-      <Modal
-        visible={true}
-        animationType="slide"
-        presentationStyle="fullScreen"
-      >
-        <View style={styles.fullScreenContainer}>
-          <View style={styles.collaborativeHeader}>
-            <Text style={styles.collaborativeTitle}>{currentConversation.title}</Text>
-            <TouchableOpacity
-              onPress={() => setShowCollaborativeView(false)}
-              style={styles.closeButton}
-            >
-              <Text style={styles.closeButtonText}>✕</Text>
-            </TouchableOpacity>
-          </View>
-          <DocumentView
-            messages={messages}
-            activeLeaf={activeLeaf}
-            conversationId={currentConversation.id}
-            currentUserId={currentUserId}
-            onBranchCreated={(branchName) => {
-              console.log('Branch created:', branchName);
-              // Could show a notification here
-            }}
-          />
-        </View>
-      </Modal>
-    );
-  }
 
   return (
     <View style={styles.container}>
@@ -421,14 +387,6 @@ export default function App({ navigation }: { navigation?: any }) {
           <Text style={styles.title}>
             {currentConversation?.title || 'Chat'} 
           </Text>
-          <TouchableOpacity
-            onPress={() => setShowCollaborativeView(!showCollaborativeView)}
-            style={styles.collaborativeButton}
-          >
-            <Text style={styles.collaborativeButtonText}>
-              {showCollaborativeView ? '💬 Chat View' : '📝 Doc View'}
-            </Text>
-          </TouchableOpacity>
         </View>
         <View style={styles.headerRight}>
           <View style={styles.userPicker}>
