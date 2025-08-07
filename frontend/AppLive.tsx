@@ -21,6 +21,12 @@ export default function App() {
   const wsRef = useRef<WebSocket | null>(null);
   const textDeltaTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isReceivingUpdateRef = useRef(false);
+  const editingMessageIdRef = useRef<string | null>(null);
+
+  // Keep ref in sync with state
+  useEffect(() => {
+    editingMessageIdRef.current = editingMessageId;
+  }, [editingMessageId]);
 
   // Load conversations on mount
   useEffect(() => {
@@ -130,13 +136,23 @@ export default function App() {
       } else if (data.type === 'text_delta') {
         // Real-time collaborative text synchronization
         console.log('📝 Received text delta:', data);
+        console.log('📝 Current state:', { 
+          editingMessageId, 
+          editingMessageIdRef: editingMessageIdRef.current,
+          incomingMessageId: data.messageId, 
+          messageIdMatch: editingMessageIdRef.current === data.messageId,
+          isMyMessage: data.userId === currentUserId 
+        });
         // If we're currently editing this message, update our text field in real-time
-        if (editingMessageId === data.messageId) {
+        if (editingMessageIdRef.current === data.messageId) {
+          console.log('✅ APPLYING text delta - updating from', editingText, 'to', data.text);
           isReceivingUpdateRef.current = true;
           setEditingText(data.text);
           setTimeout(() => {
             isReceivingUpdateRef.current = false;
           }, 50); // Brief delay to prevent echo
+        } else {
+          console.log('❌ NOT applying - different message or not editing');
         }
         // Also store for other potential uses
         setLiveTextUpdates(prev => ({
@@ -195,6 +211,7 @@ export default function App() {
   };
 
   const startEditing = (messageId: string) => {
+    console.log('🎬 Starting editing:', { messageId, userId: currentUserId });
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
         type: 'start_editing',
@@ -205,6 +222,7 @@ export default function App() {
   };
 
   const stopEditing = (messageId: string) => {
+    console.log('🛑 Stopping editing:', { messageId, userId: currentUserId });
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
         type: 'stop_editing',
@@ -309,11 +327,12 @@ export default function App() {
                   isOwn ? styles.ownMessage : styles.otherMessage
                 ]}
                 onLongPress={() => {
-                  if (isOwn) {
-                    setEditingMessageId(msg.id);
-                    setEditingText(msg.content);
-                    startEditing(msg.id);
-                  }
+                  // Allow editing any message for collaborative testing
+                  console.log('👆 Long press - starting edit for message:', msg.id);
+                  setEditingMessageId(msg.id);
+                  setEditingText(msg.content);
+                  console.log('📝 Set editingMessageId to:', msg.id);
+                  startEditing(msg.id);
                 }}
               >
                 <Text style={[
@@ -373,10 +392,14 @@ export default function App() {
               style={styles.editingInput}
               value={editingText}
               onChangeText={(text) => {
+                console.log('✏️ Text changed:', { text, editingMessageId, isReceiving: isReceivingUpdateRef.current });
                 setEditingText(text);
                 // Send real-time text delta to other users (but not if we're receiving an update)
                 if (editingMessageId && !isReceivingUpdateRef.current) {
+                  console.log('📤 Sending text_delta:', { messageId: editingMessageId, text });
                   sendTextDelta(editingMessageId, text, text.length); // Cursor at end for simplicity
+                } else {
+                  console.log('🚫 Skipping text_delta send:', { editingMessageId: !!editingMessageId, isReceiving: isReceivingUpdateRef.current });
                 }
               }}
               onSelectionChange={(event) => {
@@ -393,6 +416,7 @@ export default function App() {
               <TouchableOpacity 
                 style={[styles.editingButton, styles.cancelButton]} 
                 onPress={() => {
+                  console.log('❌ Cancel button pressed - clearing editingMessageId');
                   stopEditing(editingMessageId);
                   setEditingMessageId(null);
                   setEditingText('');
@@ -416,6 +440,7 @@ export default function App() {
                       
                       if (response.ok) {
                         // Message update will be received via WebSocket broadcast
+                        console.log('💾 Save successful - clearing editingMessageId');
                         stopEditing(editingMessageId);
                         setEditingMessageId(null);
                         setEditingText('');

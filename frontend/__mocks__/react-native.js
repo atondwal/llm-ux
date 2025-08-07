@@ -44,6 +44,16 @@ const Switch = ({ value, onValueChange, testID, ...props }) =>
     ...props 
   }, null);
 
+const ScrollView = ({ children, testID, ...props }) => 
+  React.createElement('ScrollView', { testID, ...props }, children);
+
+const ActivityIndicator = ({ size, testID, ...props }) =>
+  React.createElement('ActivityIndicator', { 
+    testID,
+    size,
+    ...props 
+  }, null);
+
 const StyleSheet = {
   create: (styles) => styles,
   flatten: (style) => style,
@@ -56,6 +66,8 @@ module.exports = {
   TouchableOpacity,
   FlatList,
   Switch,
+  ScrollView,
+  ActivityIndicator,
   StyleSheet,
   Platform: {
     OS: 'ios',
