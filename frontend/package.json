@@ -1,0 +1,33 @@
+{
+  "name": "frontend",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "test": "jest --coverage",
+    "test:watch": "jest --watch",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "expo": "~53.0.20",
+    "expo-status-bar": "~2.2.3",
+    "react": "19.0.0",
+    "react-native": "0.79.5",
+    "zod": "^4.0.15"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.2",
+    "@testing-library/jest-native": "^5.4.3",
+    "@testing-library/react-native": "^13.2.2",
+    "@types/jest": "^30.0.0",
+    "@types/react": "~19.0.10",
+    "jest": "^30.0.5",
+    "jest-expo": "^53.0.9",
+    "ts-jest": "^29.4.1",
+    "typescript": "~5.8.3"
+  },
+  "private": true
+}
