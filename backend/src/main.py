@@ -57,15 +57,15 @@ def create_app() -> FastAPI:
             self.user_count[conversation_id] += 1
             
         def disconnect(self, websocket: WebSocket, conversation_id: str):
-            if conversation_id in self.active_connections:  # pragma: no branch
+            if conversation_id in self.active_connections:
                 self.active_connections[conversation_id].remove(websocket)
                 self.user_count[conversation_id] -= 1
-                if not self.active_connections[conversation_id]:  # pragma: no branch
+                if not self.active_connections[conversation_id]:
                     del self.active_connections[conversation_id]
                     del self.user_count[conversation_id]
         
         async def broadcast(self, message: str, conversation_id: str, exclude: WebSocket = None):
-            if conversation_id in self.active_connections:  # pragma: no branch
+            if conversation_id in self.active_connections:
                 for connection in self.active_connections[conversation_id]:
                     if connection != exclude:
                         await connection.send_text(message)
@@ -79,6 +79,9 @@ def create_app() -> FastAPI:
             return self.user_count.get(conversation_id, 0)
     
     manager = ConnectionManager()
+    
+    # Export manager for testing
+    app.manager = manager  # type: ignore
     
     @app.get("/v1/conversations")
     async def list_conversations() -> Dict[str, Any]:
