@@ -151,6 +151,15 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Conversation not found")
         return conversations[conversation_id]
     
+    @app.get("/v1/conversations/{conversation_id}/messages")
+    async def get_messages(conversation_id: str) -> Dict[str, Any]:
+        """Get all messages from a conversation."""
+        if conversation_id not in conversations:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        conversation = conversations[conversation_id]
+        return {"data": [msg.model_dump() for msg in conversation.messages]}
+    
     @app.post("/v1/conversations/{conversation_id}/messages", status_code=201)
     async def add_message(conversation_id: str, message_data: Dict[str, Any], background_tasks: BackgroundTasks) -> Message:
         """Add a message to a conversation."""
