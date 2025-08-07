@@ -21,6 +21,12 @@ export default function App({ navigation }: { navigation?: any }) {
   const [editingText, setEditingText] = useState('');
   const [aiProactive, setAiProactive] = useState(false);
   const [showCollaborativeView, setShowCollaborativeView] = useState(false);
+  
+  // Branching state
+  const [leaves, setLeaves] = useState<any[]>([]);
+  const [activeLeaf, setActiveLeaf] = useState<any>(null);
+  const [messageVersions, setMessageVersions] = useState<{[key: string]: any[]}>({});
+  
   const wsRef = useRef<WebSocket | null>(null);
   
   // Yjs document and provider refs for collaborative editing
@@ -80,11 +86,32 @@ export default function App({ navigation }: { navigation?: any }) {
   const selectConversation = async (conv: any) => {
     setCurrentConversation(conv);
     
+    // Load leaves first
+    try {
+      const leavesResponse = await fetch(`${API_URL}/v1/conversations/${conv.id}/leaves`);
+      const leavesData = await leavesResponse.json();
+      setLeaves(leavesData.leaves || []);
+      
+      // Set active leaf
+      const activeLeafId = leavesData.active_leaf_id;
+      const activeLeafObj = leavesData.leaves?.find((l: any) => l.id === activeLeafId);
+      setActiveLeaf(activeLeafObj || leavesData.leaves?.[0]);
+    } catch (error) {
+      console.error('Failed to load leaves:', error);
+    }
+    
     // Load messages
     try {
       const response = await fetch(`${API_URL}/v1/conversations/${conv.id}`);
       const data = await response.json();
       setMessages(data.messages || []);
+      
+      // Load versions for each message
+      if (data.messages) {
+        for (const msg of data.messages) {
+          loadMessageVersions(msg.id);
+        }
+      }
     } catch (error) {
       console.error('Failed to load messages:', error);
     }
@@ -263,6 +290,62 @@ export default function App({ navigation }: { navigation?: any }) {
     yTextRef.current = null;
   };
 
+  // Load versions for a message
+  const loadMessageVersions = async (messageId: string) => {
+    if (!currentConversation) return;
+    
+    try {
+      const response = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/messages/${messageId}/versions`);
+      const data = await response.json();
+      setMessageVersions(prev => ({
+        ...prev,
+        [messageId]: data.versions || []
+      }));
+      return data;
+    } catch (error) {
+      console.error('Failed to load versions:', error);
+      return null;
+    }
+  };
+
+  // Navigate to a different version of a message
+  const navigateToVersion = async (messageId: string, versionIndex: number) => {
+    if (!currentConversation) return;
+    
+    try {
+      const response = await fetch(
+        `${API_URL}/v1/conversations/${currentConversation.id}/messages/${messageId}/version`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ version_index: versionIndex })
+        }
+      );
+      
+      if (response.ok) {
+        const data = await response.json();
+        
+        // Update the message content locally
+        setMessages(prev => prev.map(msg => 
+          msg.id === messageId 
+            ? { ...msg, content: data.content }
+            : msg
+        ));
+        
+        // Reload leaves to get updated active leaf
+        const leavesResponse = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/leaves`);
+        const leavesData = await leavesResponse.json();
+        setLeaves(leavesData.leaves || []);
+        
+        const activeLeafId = leavesData.active_leaf_id;
+        const activeLeafObj = leavesData.leaves?.find((l: any) => l.id === activeLeafId);
+        setActiveLeaf(activeLeafObj);
+      }
+    } catch (error) {
+      console.error('Failed to navigate version:', error);
+    }
+  };
+
   const handleEditingTextChange = (text: string) => {
     setEditingText(text);
     
@@ -354,13 +437,23 @@ export default function App({ navigation }: { navigation?: any }) {
       </View>
       
       <View style={styles.aiToggleContainer}>
-        <Text style={styles.aiToggleLabel}>AI Proactive Mode:</Text>
-        <TouchableOpacity
-          onPress={() => setAiProactive(!aiProactive)}
-          style={[styles.aiToggle, aiProactive && styles.aiToggleActive]}
-        >
-          <Text style={styles.aiToggleText}>{aiProactive ? 'ON' : 'OFF'}</Text>
-        </TouchableOpacity>
+        <View style={styles.leafSelector}>
+          <Text style={styles.leafLabel}>Branch: </Text>
+          <Text style={styles.leafName}>{activeLeaf?.name || 'main'}</Text>
+          {leaves.length > 1 && (
+            <Text style={styles.leafCount}> ({leaves.length} total)</Text>
+          )}
+        </View>
+        
+        <View style={styles.aiToggleRow}>
+          <Text style={styles.aiToggleLabel}>AI Mode:</Text>
+          <TouchableOpacity
+            onPress={() => setAiProactive(!aiProactive)}
+            style={[styles.aiToggle, aiProactive && styles.aiToggleActive]}
+          >
+            <Text style={styles.aiToggleText}>{aiProactive ? 'ON' : 'OFF'}</Text>
+          </TouchableOpacity>
+        </View>
       </View>
       
       {editingSessions.length > 0 && (
@@ -375,6 +468,9 @@ export default function App({ navigation }: { navigation?: any }) {
         {messages.map((msg: any, index: number) => {
           const isOwn = msg.author_id === currentUserId;
           const showAuthor = index === 0 || messages[index - 1].author_id !== msg.author_id;
+          const versions = messageVersions[msg.id] || [];
+          const hasVersions = versions.length > 1;
+          const currentVersionIndex = versions.findIndex((v: any) => v.leaf_id === activeLeaf?.id) || 0;
           
           return (
             <View key={msg.id} style={[
@@ -386,12 +482,72 @@ export default function App({ navigation }: { navigation?: any }) {
                   {msg.author_id === 'ai-1' ? 'Assistant' : 'User'}
                 </Text>
               )}
+              
+              {/* Version navigation */}
+              {hasVersions && (
+                <View style={styles.versionNav}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      const prevIndex = Math.max(0, currentVersionIndex - 1);
+                      navigateToVersion(msg.id, prevIndex);
+                    }}
+                    disabled={currentVersionIndex === 0}
+                    style={[styles.versionArrow, currentVersionIndex === 0 && styles.versionArrowDisabled]}
+                  >
+                    <Text style={styles.versionArrowText}>←</Text>
+                  </TouchableOpacity>
+                  
+                  <Text style={styles.versionIndicator}>
+                    {currentVersionIndex + 1} / {versions.length}
+                  </Text>
+                  
+                  <TouchableOpacity
+                    onPress={() => {
+                      const nextIndex = Math.min(versions.length - 1, currentVersionIndex + 1);
+                      navigateToVersion(msg.id, nextIndex);
+                    }}
+                    disabled={currentVersionIndex === versions.length - 1}
+                    style={[styles.versionArrow, currentVersionIndex === versions.length - 1 && styles.versionArrowDisabled]}
+                  >
+                    <Text style={styles.versionArrowText}>→</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+              
               <TouchableOpacity
                 style={[
                   styles.message,
                   isOwn ? styles.ownMessage : styles.otherMessage
                 ]}
-                onLongPress={() => {
+                onLongPress={async () => {
+                  // Check if this is not the last message (editing old message)
+                  const isOldMessage = index < messages.length - 1;
+                  
+                  if (isOldMessage) {
+                    // Create a new branch/leaf
+                    const response = await fetch(
+                      `${API_URL}/v1/conversations/${currentConversation.id}/leaves`,
+                      {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          branch_from_message_id: msg.id,
+                          name: `edit-${msg.id.slice(0, 8)}`
+                        })
+                      }
+                    );
+                    
+                    if (response.ok) {
+                      const newLeaf = await response.json();
+                      setActiveLeaf(newLeaf);
+                      
+                      // Reload leaves
+                      const leavesResponse = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/leaves`);
+                      const leavesData = await leavesResponse.json();
+                      setLeaves(leavesData.leaves || []);
+                    }
+                  }
+                  
                   setEditingMessageId(msg.id);
                   setEditingText(msg.content);
                   startEditing(msg.id);
@@ -476,7 +632,8 @@ export default function App({ navigation }: { navigation?: any }) {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                          content: editingText
+                          content: editingText,
+                          leaf_id: activeLeaf?.id
                         })
                       });
                       
@@ -789,5 +946,54 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#2e7d32',
     fontWeight: '500',
+  },
+  versionNav: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    marginBottom: 4,
+  },
+  versionArrow: {
+    padding: 4,
+    backgroundColor: '#f0f0f0',
+    borderRadius: 4,
+    marginHorizontal: 8,
+  },
+  versionArrowDisabled: {
+    opacity: 0.3,
+  },
+  versionArrowText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  versionIndicator: {
+    fontSize: 12,
+    color: '#666',
+    fontWeight: '500',
+  },
+  leafSelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  leafLabel: {
+    fontSize: 14,
+    color: '#666',
+  },
+  leafName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+  },
+  leafCount: {
+    fontSize: 12,
+    color: '#999',
+  },
+  aiToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
 });
