@@ -20,6 +20,7 @@ export default function App() {
   const [cursorPositions, setCursorPositions] = useState<{[key: string]: {userId: string, position: number}[]}>({});
   const wsRef = useRef<WebSocket | null>(null);
   const textDeltaTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isReceivingUpdateRef = useRef(false);
 
   // Load conversations on mount
   useEffect(() => {
@@ -127,8 +128,17 @@ export default function App() {
           prev.filter(s => !(s.messageId === data.messageId && s.userId === data.userId))
         );
       } else if (data.type === 'text_delta') {
-        // Real-time text synchronization from other users
+        // Real-time collaborative text synchronization
         console.log('📝 Received text delta:', data);
+        // If we're currently editing this message, update our text field in real-time
+        if (editingMessageId === data.messageId) {
+          isReceivingUpdateRef.current = true;
+          setEditingText(data.text);
+          setTimeout(() => {
+            isReceivingUpdateRef.current = false;
+          }, 50); // Brief delay to prevent echo
+        }
+        // Also store for other potential uses
         setLiveTextUpdates(prev => ({
           ...prev,
           [data.messageId]: data.text
@@ -337,22 +347,23 @@ export default function App() {
       {editingMessageId && (
         <View style={styles.editingOverlay}>
           <View style={styles.editingModal}>
-            <Text style={styles.editingTitle}>Edit Message</Text>
+            <Text style={styles.editingTitle}>Edit Message (Collaborative)</Text>
             
-            {/* Show live text updates from other users */}
-            {editingMessageId && liveTextUpdates[editingMessageId] && (
-              <View style={styles.liveUpdateContainer}>
-                <Text style={styles.liveUpdateLabel}>Live from others:</Text>
-                <Text style={styles.liveUpdateText}>{liveTextUpdates[editingMessageId]}</Text>
+            {/* Show who else is editing this message */}
+            {editingMessageId && editingSessions.filter(s => s.messageId === editingMessageId && s.userId !== currentUserId).length > 0 && (
+              <View style={styles.collaboratorsContainer}>
+                <Text style={styles.collaboratorsLabel}>
+                  👥 Also editing: {editingSessions.filter(s => s.messageId === editingMessageId && s.userId !== currentUserId).map(s => s.userId).join(', ')}
+                </Text>
               </View>
             )}
             
-            {/* Show cursor positions from other users */}
+            {/* Show cursor positions from other users within the same editing context */}
             {editingMessageId && cursorPositions[editingMessageId] && cursorPositions[editingMessageId].length > 0 && (
               <View style={styles.cursorContainer}>
                 {cursorPositions[editingMessageId].map((cursor, index) => (
                   <Text key={index} style={styles.cursorIndicator}>
-                    👆 {cursor.userId} at position {cursor.position}
+                    👆 {cursor.userId} editing at position {cursor.position}
                   </Text>
                 ))}
               </View>
@@ -363,8 +374,8 @@ export default function App() {
               value={editingText}
               onChangeText={(text) => {
                 setEditingText(text);
-                // Send real-time text delta to other users
-                if (editingMessageId) {
+                // Send real-time text delta to other users (but not if we're receiving an update)
+                if (editingMessageId && !isReceivingUpdateRef.current) {
                   sendTextDelta(editingMessageId, text, text.length); // Cursor at end for simplicity
                 }
               }}
@@ -634,24 +645,18 @@ const styles = StyleSheet.create({
     color: 'white',
     fontWeight: 'bold',
   },
-  liveUpdateContainer: {
-    backgroundColor: '#f0f8ff',
+  collaboratorsContainer: {
+    backgroundColor: '#e8f5e8',
     padding: 8,
     borderRadius: 4,
     marginBottom: 10,
     borderLeftWidth: 3,
-    borderLeftColor: '#007AFF',
+    borderLeftColor: '#4caf50',
   },
-  liveUpdateLabel: {
+  collaboratorsLabel: {
     fontSize: 12,
-    color: '#666',
+    color: '#2e7d32',
     fontWeight: '500',
-    marginBottom: 4,
-  },
-  liveUpdateText: {
-    fontSize: 14,
-    color: '#333',
-    fontStyle: 'italic',
   },
   cursorContainer: {
     backgroundColor: '#fff8e1',
