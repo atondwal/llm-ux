@@ -1,22 +1,33 @@
 /**
  * Tests for AppLive component - real-time collaborative editing
- * Following TDD: Red phase - these tests should FAIL initially
+ * Following TDD: Green phase - implementing to make tests pass
  */
 import React from 'react';
 import { render, fireEvent, waitFor, act } from '@testing-library/react-native';
 import AppLive from '../../../AppLive';
 
-// Mock WebSocket
+// Skip React Native component mocking for now - focus on logic testing
+
+// Mock WebSocket with better event handling
 const mockWebSocket = {
   send: jest.fn(),
   close: jest.fn(),
   readyState: 1, // OPEN
-  addEventListener: jest.fn(),
-  removeEventListener: jest.fn(),
+  onopen: null as any,
+  onmessage: null as any,
+  onerror: null as any,
+  onclose: null as any,
 };
 
-// Mock global WebSocket
-global.WebSocket = jest.fn(() => mockWebSocket) as any;
+// Mock global WebSocket constructor
+global.WebSocket = jest.fn((url: string) => {
+  const ws = { ...mockWebSocket };
+  // Simulate connection after creation
+  setTimeout(() => {
+    if (ws.onopen) ws.onopen({});
+  }, 0);
+  return ws;
+}) as any;
 
 // Mock fetch
 global.fetch = jest.fn();

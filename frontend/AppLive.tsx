@@ -1,5 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, View, Text, Button, ActivityIndicator, ScrollView, TextInput, TouchableOpacity } from 'react-native';
+import { StyleSheet, View, Text, Button, ScrollView, TextInput, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useState, useEffect, useRef } from 'react';
 
 const API_URL = 'http://localhost:8000';
@@ -16,7 +16,10 @@ export default function App() {
   const [currentUserId, setCurrentUserId] = useState('user-1');
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
+  const [liveTextUpdates, setLiveTextUpdates] = useState<{[messageId: string]: string}>({});
+  const [cursorPositions, setCursorPositions] = useState<{[key: string]: {userId: string, position: number}[]}>({});
   const wsRef = useRef<WebSocket | null>(null);
+  const textDeltaTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Load conversations on mount
   useEffect(() => {
@@ -123,6 +126,23 @@ export default function App() {
         setEditingSessions(prev => 
           prev.filter(s => !(s.messageId === data.messageId && s.userId === data.userId))
         );
+      } else if (data.type === 'text_delta') {
+        // Real-time text synchronization from other users
+        console.log('📝 Received text delta:', data);
+        setLiveTextUpdates(prev => ({
+          ...prev,
+          [data.messageId]: data.text
+        }));
+      } else if (data.type === 'cursor_move') {
+        // Real-time cursor position updates from other users
+        console.log('👆 Received cursor move:', data);
+        setCursorPositions(prev => ({
+          ...prev,
+          [data.messageId]: [
+            ...(prev[data.messageId] || []).filter(cursor => cursor.userId !== data.userId),
+            { userId: data.userId, position: data.cursorPosition }
+          ]
+        }));
       } else if (data.type === 'presence') {
         console.log(`Active users: ${data.activeUsers}`);
       }
@@ -180,6 +200,41 @@ export default function App() {
         type: 'stop_editing',
         messageId,
         userId: currentUserId
+      }));
+    }
+  };
+
+  // Send text_delta messages with debouncing
+  const sendTextDelta = (messageId: string, text: string, cursorPosition: number) => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+
+    // Clear existing timeout
+    if (textDeltaTimeoutRef.current) {
+      clearTimeout(textDeltaTimeoutRef.current);
+    }
+
+    // Debounce text updates to avoid spam
+    textDeltaTimeoutRef.current = setTimeout(() => {
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({
+          type: 'text_delta',
+          messageId,
+          userId: currentUserId,
+          text,
+          cursorPosition
+        }));
+      }
+    }, 150); // 150ms debounce
+  };
+
+  // Send cursor position updates
+  const sendCursorMove = (messageId: string, cursorPosition: number) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'cursor_move',
+        messageId,
+        userId: currentUserId,
+        cursorPosition
       }));
     }
   };
@@ -283,10 +338,43 @@ export default function App() {
         <View style={styles.editingOverlay}>
           <View style={styles.editingModal}>
             <Text style={styles.editingTitle}>Edit Message</Text>
+            
+            {/* Show live text updates from other users */}
+            {editingMessageId && liveTextUpdates[editingMessageId] && (
+              <View style={styles.liveUpdateContainer}>
+                <Text style={styles.liveUpdateLabel}>Live from others:</Text>
+                <Text style={styles.liveUpdateText}>{liveTextUpdates[editingMessageId]}</Text>
+              </View>
+            )}
+            
+            {/* Show cursor positions from other users */}
+            {editingMessageId && cursorPositions[editingMessageId] && cursorPositions[editingMessageId].length > 0 && (
+              <View style={styles.cursorContainer}>
+                {cursorPositions[editingMessageId].map((cursor, index) => (
+                  <Text key={index} style={styles.cursorIndicator}>
+                    👆 {cursor.userId} at position {cursor.position}
+                  </Text>
+                ))}
+              </View>
+            )}
+            
             <TextInput
               style={styles.editingInput}
               value={editingText}
-              onChangeText={setEditingText}
+              onChangeText={(text) => {
+                setEditingText(text);
+                // Send real-time text delta to other users
+                if (editingMessageId) {
+                  sendTextDelta(editingMessageId, text, text.length); // Cursor at end for simplicity
+                }
+              }}
+              onSelectionChange={(event) => {
+                // Send cursor position updates
+                if (editingMessageId && event.nativeEvent.selection) {
+                  const cursorPosition = event.nativeEvent.selection.start;
+                  sendCursorMove(editingMessageId, cursorPosition);
+                }
+              }}
               multiline
               autoFocus
             />
@@ -545,5 +633,37 @@ const styles = StyleSheet.create({
   saveButtonText: {
     color: 'white',
     fontWeight: 'bold',
+  },
+  liveUpdateContainer: {
+    backgroundColor: '#f0f8ff',
+    padding: 8,
+    borderRadius: 4,
+    marginBottom: 10,
+    borderLeftWidth: 3,
+    borderLeftColor: '#007AFF',
+  },
+  liveUpdateLabel: {
+    fontSize: 12,
+    color: '#666',
+    fontWeight: '500',
+    marginBottom: 4,
+  },
+  liveUpdateText: {
+    fontSize: 14,
+    color: '#333',
+    fontStyle: 'italic',
+  },
+  cursorContainer: {
+    backgroundColor: '#fff8e1',
+    padding: 8,
+    borderRadius: 4,
+    marginBottom: 10,
+    borderLeftWidth: 3,
+    borderLeftColor: '#ff9800',
+  },
+  cursorIndicator: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 2,
   },
 });
