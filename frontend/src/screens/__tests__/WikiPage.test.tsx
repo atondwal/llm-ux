@@ -87,24 +87,56 @@ describe('WikiPage', () => {
   });
 
   it('should load and display related messages', async () => {
-    // Mock conversations fetch
-    (global.fetch as jest.MockedFunction<typeof fetch>)
-      .mockResolvedValueOnce({
+    // Reset mock and set up specific responses
+    (global.fetch as jest.MockedFunction<typeof fetch>).mockReset();
+    
+    // Mock implementation that handles the URLs properly
+    (global.fetch as jest.MockedFunction<typeof fetch>).mockImplementation(async (url) => {
+      const urlStr = url.toString();
+      
+      // Handle /v1/wiki/{concept} call
+      if (urlStr.includes('/v1/wiki/')) {
+        return {
+          ok: true,
+          json: async () => ({ 
+            id: 'wiki-react-native',
+            type: 'wiki',
+            title: 'React Native',
+            participants: [],
+            messages: []
+          })
+        } as Response;
+      }
+      
+      // Handle /v1/conversations call (list all conversations)
+      if (urlStr.endsWith('/v1/conversations')) {
+        return {
+          ok: true,
+          json: async () => ({ data: [{ id: 'conv-1', title: 'Test' }] })
+        } as Response;
+      }
+      
+      // Handle /v1/conversations/{id}/messages call
+      if (urlStr.includes('/messages')) {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [
+              { id: 'msg-1', author_id: 'user-1', content: 'Learning [[React Native]] is fun!', created_at: '2024-01-01T00:00:00Z' },
+              { id: 'msg-2', author_id: 'user-2', content: 'I use [[React Native]] for mobile apps.', created_at: '2024-01-02T00:00:00Z' }
+            ]
+          })
+        } as Response;
+      }
+      
+      // Default response
+      return {
         ok: true,
-        json: async () => ({ data: [{ id: 'conv-1', title: 'Test' }] })
-      } as Response)
-      // Mock messages fetch for conv-1
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          data: [
-            { id: 'msg-1', author_id: 'user-1', content: 'Learning [[React Native]] is fun!', created_at: '2024-01-01T00:00:00Z' },
-            { id: 'msg-2', author_id: 'user-2', content: 'I use [[React Native]] for mobile apps.', created_at: '2024-01-02T00:00:00Z' }
-          ]
-        })
-      } as Response);
+        json: async () => ({ data: [] })
+      } as Response;
+    });
 
-    const { getByText } = render(
+    const { getByText, getAllByText } = render(
       <WikiPage 
         navigation={mockNavigation as any} 
         route={mockRoute as any} 
@@ -112,8 +144,14 @@ describe('WikiPage', () => {
     );
 
     await waitFor(() => {
-      expect(getByText('Learning [[React Native]] is fun!')).toBeTruthy();
-      expect(getByText('I use [[React Native]] for mobile apps.')).toBeTruthy();
+      // WikiText component renders wiki tags separately, so check for text parts
+      expect(getByText('Learning')).toBeTruthy();
+      expect(getByText('is fun!')).toBeTruthy();
+      expect(getByText('I use')).toBeTruthy();
+      expect(getByText('for mobile apps.')).toBeTruthy();
+      // React Native appears multiple times (title + wiki links)
+      const reactNativeElements = getAllByText('React Native');
+      expect(reactNativeElements.length).toBeGreaterThan(0);
     }, { timeout: 3000 });
   });
 
