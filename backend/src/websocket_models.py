@@ -23,12 +23,6 @@ class WSMessageData(BaseModel):
     authorId: str = Field(..., alias="authorId")
     content: str = Field(..., min_length=1)
     
-    @validator("content")
-    def content_not_empty(cls, v: str) -> str:
-        if not v or not v.strip():
-            raise ValueError("Content cannot be empty")
-        return v
-    
     class Config:
         populate_by_name = True
 
@@ -38,11 +32,6 @@ class WSMessageBroadcast(BaseModel):
     type: Literal["message"] = "message"
     message: Dict[str, Any]
 
-
-class WSMessageEditedBroadcast(BaseModel):
-    """Broadcast message edit to all connected clients."""
-    type: Literal["message_edited"] = "message_edited"
-    message: Dict[str, Any]
 
 
 class WSTypingIndicator(BaseModel):

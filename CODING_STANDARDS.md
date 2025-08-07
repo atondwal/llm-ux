@@ -385,6 +385,16 @@ Everything else: **100% coverage, no exceptions**.
 5. **Onboarding**: New devs understand via tests
 6. **Quality**: Bugs caught before production
 
+## Troubleshooting Coverage
+
+### If you can't achieve 100% coverage:
+1. **SIMPLIFY YOUR CODE** - Remove features, not tests
+2. **Delete unused code paths** - If it's not tested, delete it
+3. **Avoid overengineering** - Minimal code to pass tests
+4. **Fix the integration properly** - Don't skip tests, fix the code
+
+**Remember**: It's better to have simple code with 100% coverage than complex code with 90% coverage.
+
 ## Remember
 
 > "The only way to go fast is to go well." - Robert C. Martin

@@ -104,3 +104,4 @@ The backend is SOLID with 100% coverage. Frontend needs test fixes to continue T
 - **Type safety everywhere**
 - **Self-review after each commit**
 - **Keep it simple and hackable**
+- **If coverage is hard, SIMPLIFY THE CODE (not the tests)**
