@@ -28,6 +28,8 @@ def create_app() -> FastAPI:
     )
     
     # In-memory storage for tests (will be replaced with database)
+    # TODO: Replace with PostgreSQL + SQLAlchemy for persistence
+    # TODO: Add Redis for caching frequently accessed conversations
     conversations: Dict[str, Conversation] = {}
     
     @app.post("/v1/conversations", status_code=201)
@@ -64,6 +66,8 @@ def create_app() -> FastAPI:
     @app.post("/v1/chat/completions")
     async def create_chat_completion(request: ChatCompletionRequest) -> ChatCompletionResponse:
         """OpenAI-compatible chat completion endpoint."""
+        # TODO: Integrate with actual AI providers (OpenAI, Anthropic)
+        # TODO: Add streaming support with Server-Sent Events
         # Minimal implementation for tests
         response = ChatCompletionResponse(
             id=f"chatcmpl-{uuid.uuid4().hex[:8]}",
