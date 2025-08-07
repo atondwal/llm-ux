@@ -70,6 +70,7 @@ def create_app() -> FastAPI:
     leaves: Dict[str, List[Leaf]] = {}  # conversation_id -> list of leaves
     active_leaves: Dict[str, str] = {}  # conversation_id -> active leaf_id
     message_versions: Dict[str, List[MessageVersion]] = {}  # message_id -> list of versions
+    leaf_messages: Dict[str, List[str]] = {}  # leaf_id -> list of message_ids created in this leaf
     # Note: Branch points are derived from leaves with same parent_message_id
     
     # WebSocket connection manager
@@ -182,6 +183,8 @@ def create_app() -> FastAPI:
         )
         leaves[conversation.id] = [main_leaf]
         active_leaves[conversation.id] = main_leaf.id
+        # Track any existing messages as belonging to main
+        leaf_messages[main_leaf.id] = [msg.id for msg in conversation.messages]
         
         return conversation
     
@@ -214,7 +217,24 @@ def create_app() -> FastAPI:
                 messages_list = [msg.model_dump() for msg in conversation.messages]
             else:
                 # Return messages with leaf-specific versions
-                for msg in conversation.messages:
+                # If this leaf has a branch point, only include messages up to that point
+                # plus any messages created in this leaf
+                branch_point_index = None
+                if target_leaf.branch_point_message_id:
+                    for i, msg in enumerate(conversation.messages):
+                        if msg.id == target_leaf.branch_point_message_id:
+                            branch_point_index = i
+                            break
+                
+                # Get messages created in this leaf
+                this_leaf_messages = set(leaf_messages.get(target_leaf.id, []))
+                
+                for i, msg in enumerate(conversation.messages):
+                    # Skip messages after branch point unless they belong to this leaf
+                    if branch_point_index is not None and i > branch_point_index:
+                        if msg.id not in this_leaf_messages:
+                            continue
+                    
                     msg_dict = msg.model_dump()
                     
                     # Check if this leaf has a specific version of this message
@@ -250,6 +270,11 @@ def create_app() -> FastAPI:
         
         # Get current active leaf
         active_leaf_id = active_leaves.get(conversation_id, "main")
+        
+        # Track this message as belonging to the active leaf
+        if active_leaf_id not in leaf_messages:
+            leaf_messages[active_leaf_id] = []
+        leaf_messages[active_leaf_id].append(message.id)
         
         # Broadcast to WebSocket clients in background
         broadcast_msg = WSMessageBroadcast(message=message.model_dump())
