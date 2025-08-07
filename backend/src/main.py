@@ -265,20 +265,39 @@ def create_app() -> FastAPI:
         )
         return response
     
+    # Store Yjs documents in memory (would be Redis/DB in production)
+    yjs_documents: Dict[str, List[WebSocket]] = {}
+    
     @app.websocket("/ws/collaborative/{document_id}")
     async def yjs_websocket_endpoint(websocket: WebSocket, document_id: str) -> None:
         """WebSocket endpoint for Yjs collaborative editing."""
         await websocket.accept()
         
-        # Simple echo server for Yjs - in production you'd want persistent document storage
+        # Add to document connections
+        if document_id not in yjs_documents:
+            yjs_documents[document_id] = []
+        yjs_documents[document_id].append(websocket)
+        
         try:
             while True:
+                # Receive binary data from Yjs
                 data = await websocket.receive_bytes()
-                # Echo the message to all other clients (basic Yjs sync)
-                # In production, you'd store document state and sync properly
-                await manager.broadcast(data.hex(), document_id, exclude=websocket)
+                
+                # Broadcast to all other clients editing this document
+                for conn in yjs_documents[document_id]:
+                    if conn != websocket:
+                        try:
+                            await conn.send_bytes(data)
+                        except:
+                            # Remove dead connections
+                            yjs_documents[document_id].remove(conn)
         except WebSocketDisconnect:
-            pass
+            # Remove from connections
+            if document_id in yjs_documents:
+                if websocket in yjs_documents[document_id]:
+                    yjs_documents[document_id].remove(websocket)
+                if not yjs_documents[document_id]:
+                    del yjs_documents[document_id]
     
     @app.websocket("/v1/conversations/{conversation_id}/ws")
     async def websocket_endpoint(websocket: WebSocket, conversation_id: str) -> None:

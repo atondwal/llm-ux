@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import AppLive from './AppLive';
+import AppLiveWithYjs from './AppLiveWithYjs';
 import WikiPage from './src/screens/WikiPage';
 
 type CurrentScreen = 'Chat' | 'WikiPage';
@@ -41,5 +41,5 @@ export default function App() {
     );
   }
 
-  return <AppLive navigation={navigation} />;
+  return <AppLiveWithYjs navigation={navigation} />;
 }
