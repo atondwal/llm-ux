@@ -17,6 +17,10 @@ export default function App({ navigation }: { navigation?: any }) {
   const [loading, setLoading] = useState(true);
   const [currentUserId, setCurrentUserId] = useState('user-1');
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  
+  // Sidebar state
+  const [sidebarVisible, setSidebarVisible] = useState(true);
+  const [allConversations, setAllConversations] = useState<any[]>([]);
   // Debug: Track editingMessageId changes
   useEffect(() => {
     console.log("🎯 editingMessageId changed to:", editingMessageId);
@@ -49,6 +53,7 @@ export default function App({ navigation }: { navigation?: any }) {
       .then(res => res.json())
       .then(data => {
         const convs = data.data || [];
+        setAllConversations(convs);
         if (convs.length > 0) {
           selectConversation(convs[0]);
         } else {
@@ -63,13 +68,14 @@ export default function App({ navigation }: { navigation?: any }) {
 
   const createNewConversation = async () => {
     try {
+      const conversationNumber = allConversations.filter(c => c.type === 'chat').length + 1;
       const response = await fetch(`${API_URL}/v1/conversations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: `conv-${Date.now()}`,
           type: 'chat',
-          title: 'Live Chat',
+          title: `Chat ${conversationNumber}`,
           participants: [
             { id: 'user-1', type: 'human', name: 'You' },
             { id: 'ai-1', type: 'ai', name: 'Assistant' }
@@ -79,6 +85,7 @@ export default function App({ navigation }: { navigation?: any }) {
         })
       });
       const conv = await response.json();
+      setAllConversations(prev => [...prev, conv]);
       selectConversation(conv);
     } catch (error) {
       console.error('Failed to create conversation:', error);
@@ -87,7 +94,18 @@ export default function App({ navigation }: { navigation?: any }) {
   };
 
   const selectConversation = async (conv: any) => {
+    // Clean up existing connections
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+    if (providerRef.current) {
+      providerRef.current.destroy();
+      providerRef.current = null;
+    }
+    
     setCurrentConversation(conv);
+    setLoading(true);
     
     // Load leaves first
     try {
@@ -498,9 +516,44 @@ export default function App({ navigation }: { navigation?: any }) {
 
 
   return (
-    <View style={styles.container}>
+    <View style={styles.appContainer}>
+      {/* Sidebar */}
+      <View style={[styles.sidebar, !sidebarVisible && styles.sidebarHidden]}>
+        <TouchableOpacity style={styles.newConvButton} onPress={createNewConversation}>
+          <Text style={styles.newConvButtonText}>+ New Chat</Text>
+        </TouchableOpacity>
+        
+        <ScrollView style={styles.convList}>
+          {allConversations.map(conv => (
+            <TouchableOpacity
+              key={conv.id}
+              style={[
+                styles.convItem,
+                conv.id === currentConversation?.id && styles.convItemActive
+              ]}
+              onPress={() => selectConversation(conv)}
+            >
+              <Text style={styles.convIcon}>
+                {conv.type === 'wiki' ? '📚' : '💬'}
+              </Text>
+              <Text style={styles.convTitle} numberOfLines={1}>
+                {conv.title}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+      
+      {/* Main Chat Area */}
+      <View style={styles.mainContent}>
       <View style={styles.header}>
         <View style={styles.headerLeft}>
+          <TouchableOpacity 
+            style={styles.sidebarToggle}
+            onPress={() => setSidebarVisible(!sidebarVisible)}
+          >
+            <Text style={styles.hamburgerIcon}>☰</Text>
+          </TouchableOpacity>
           <Text style={styles.title}>
             {currentConversation?.title || 'Chat'} 
           </Text>
@@ -832,11 +885,69 @@ export default function App({ navigation }: { navigation?: any }) {
 
 
       <StatusBar style="auto" />
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  appContainer: {
+    flex: 1,
+    flexDirection: 'row',
+  },
+  sidebar: {
+    width: 250,
+    backgroundColor: '#f5f5f5',
+    borderRightWidth: 1,
+    borderRightColor: '#e0e0e0',
+  },
+  sidebarHidden: {
+    width: 0,
+    overflow: 'hidden',
+  },
+  newConvButton: {
+    margin: 10,
+    padding: 12,
+    backgroundColor: '#007AFF',
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  newConvButtonText: {
+    color: 'white',
+    fontWeight: '600',
+  },
+  convList: {
+    flex: 1,
+  },
+  convItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  convItemActive: {
+    backgroundColor: '#e3f2fd',
+  },
+  convIcon: {
+    fontSize: 16,
+    marginRight: 8,
+  },
+  convTitle: {
+    flex: 1,
+    fontSize: 14,
+  },
+  mainContent: {
+    flex: 1,
+    backgroundColor: '#fafafa',
+  },
+  sidebarToggle: {
+    padding: 8,
+    marginRight: 8,
+  },
+  hamburgerIcon: {
+    fontSize: 20,
+  },
   container: {
     flex: 1,
     backgroundColor: '#fafafa', // Subtle off-white background
