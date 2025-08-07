@@ -453,7 +453,7 @@ class LeafRepository:
         )
     
     async def delete(self, leaf_id: str) -> bool:
-        """Delete a leaf and all its associated versions."""
+        """Delete a leaf and all its associated data."""
         result = await self.session.execute(
             select(LeafDB).where(LeafDB.id == leaf_id)
         )
@@ -462,12 +462,20 @@ class LeafRepository:
         if not db_leaf:
             return False
         
+        from sqlalchemy import delete
+        
         # Delete all message versions associated with this leaf
         await self.session.execute(
-            select(MessageVersionDB).where(MessageVersionDB.leaf_id == leaf_id)
+            delete(MessageVersionDB).where(MessageVersionDB.leaf_id == leaf_id)
         )
         
-        # Delete the leaf
+        # Delete all messages that were created in this leaf
+        # (messages that only exist in this branch)
+        await self.session.execute(
+            delete(MessageDB).where(MessageDB.created_in_leaf_id == leaf_id)
+        )
+        
+        # Delete the leaf itself
         await self.session.delete(db_leaf)
         await self.session.commit()
         return True

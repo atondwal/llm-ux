@@ -24,10 +24,8 @@ export default function App({ navigation }: { navigation?: any }) {
   const [editingConvId, setEditingConvId] = useState<string | null>(null);
   const [editingConvTitle, setEditingConvTitle] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
-  // Debug: Track editingMessageId changes
-  useEffect(() => {
-    console.log("🎯 editingMessageId changed to:", editingMessageId);
-  }, [editingMessageId]);
+  const [showMessageMenu, setShowMessageMenu] = useState<string | null>(null);
+  const [showBranchManager, setShowBranchManager] = useState(false);
   const [editingText, setEditingText] = useState('');
   const [aiProactive, setAiProactive] = useState(false);
   const [lastClickTime, setLastClickTime] = useState<{[key: string]: number}>({});
@@ -52,21 +50,25 @@ export default function App({ navigation }: { navigation?: any }) {
 
   // Load conversations on mount
   useEffect(() => {
-    fetch(`${API_URL}/v1/conversations`)
-      .then(res => res.json())
-      .then(data => {
+    const loadInitialData = async () => {
+      try {
+        const res = await fetch(`${API_URL}/v1/conversations`);
+        const data = await res.json();
         const convs = data.data || [];
         setAllConversations(convs);
+        
         if (convs.length > 0) {
-          selectConversation(convs[0]);
+          await selectConversation(convs[0]);
         } else {
-          createNewConversation();
+          await createNewConversation();
         }
-      })
-      .catch(err => {
+      } catch (err) {
         console.error('Failed to load conversations:', err);
         setLoading(false);
-      });
+      }
+    };
+    
+    loadInitialData();
   }, []);
 
   const createNewConversation = async () => {
@@ -107,6 +109,9 @@ export default function App({ navigation }: { navigation?: any }) {
       providerRef.current = null;
     }
     
+    // Clear previous message versions BEFORE setting new conversation
+    setMessageVersions({});
+    
     setCurrentConversation(conv);
     setLoading(true);
     
@@ -132,9 +137,8 @@ export default function App({ navigation }: { navigation?: any }) {
       
       // Load versions for each message
       if (data.data) {
-        for (const msg of data.data) {
-          loadMessageVersions(msg.id);
-        }
+        // Load all versions in parallel
+        await Promise.all(data.data.map((msg: any) => loadMessageVersions(msg.id, conv.id)));
       }
     } catch (error) {
       console.error('Failed to load messages:', error);
@@ -344,13 +348,13 @@ export default function App({ navigation }: { navigation?: any }) {
   };
 
   // Load versions for a message
-  const loadMessageVersions = async (messageId: string) => {
-    if (!currentConversation) return;
+  const loadMessageVersions = async (messageId: string, conversationId?: string) => {
+    const convId = conversationId || currentConversation?.id;
+    if (!convId) return;
     
     try {
-      const response = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/messages/${messageId}/versions`);
+      const response = await fetch(`${API_URL}/v1/conversations/${convId}/messages/${messageId}/versions`);
       const data = await response.json();
-      console.log(`Versions for message ${messageId}:`, data);
       setMessageVersions(prev => ({
         ...prev,
         [messageId]: data.versions || []
@@ -520,6 +524,116 @@ export default function App({ navigation }: { navigation?: any }) {
     }
     
     setEditingConvId(null);
+  };
+
+  const deleteMessage = async (messageId: string) => {
+    if (!currentConversation) return;
+    
+    try {
+      const response = await fetch(
+        `${API_URL}/v1/conversations/${currentConversation.id}/messages/${messageId}`,
+        { method: 'DELETE' }
+      );
+      
+      if (response.ok) {
+        // Remove from local state
+        setMessages(prev => prev.filter(m => m.id !== messageId));
+      }
+    } catch (error) {
+      console.error('Failed to delete message:', error);
+    }
+    
+    setShowMessageMenu(null);
+  };
+  
+  const pruneAfterMessage = async (messageId: string) => {
+    if (!currentConversation) return;
+    
+    try {
+      const response = await fetch(
+        `${API_URL}/v1/conversations/${currentConversation.id}/messages/prune`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            after_message_id: messageId,
+            leaf_id: activeLeaf?.id
+          })
+        }
+      );
+      
+      if (response.ok) {
+        // Reload messages
+        const messagesResponse = await fetch(
+          `${API_URL}/v1/conversations/${currentConversation.id}/messages?leaf_id=${activeLeaf?.id}`
+        );
+        const messagesData = await messagesResponse.json();
+        setMessages(messagesData.data || []);
+      }
+    } catch (error) {
+      console.error('Failed to prune messages:', error);
+    }
+    
+    setShowMessageMenu(null);
+  };
+  
+  const deleteBranch = async (leafId: string) => {
+    if (!currentConversation) return;
+    
+    try {
+      const response = await fetch(
+        `${API_URL}/v1/conversations/${currentConversation.id}/leaves/${leafId}`,
+        { method: 'DELETE' }
+      );
+      
+      if (response.ok) {
+        // Reload leaves
+        const leavesResponse = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/leaves`);
+        const leavesData = await leavesResponse.json();
+        setLeaves(leavesData.leaves || []);
+        setActiveLeaf(leavesData.leaves?.find((l: any) => l.id === leavesData.active_leaf_id));
+        
+        // Reload messages for new active leaf
+        const messagesResponse = await fetch(
+          `${API_URL}/v1/conversations/${currentConversation.id}/messages?leaf_id=${leavesData.active_leaf_id}`
+        );
+        const messagesData = await messagesResponse.json();
+        setMessages(messagesData.data || []);
+      }
+    } catch (error) {
+      console.error('Failed to delete branch:', error);
+    }
+  };
+  
+  const switchToBranch = async (leafId: string) => {
+    if (!currentConversation) return;
+    
+    try {
+      // Switch active leaf
+      await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/leaves/active`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leaf_id: leafId })
+      });
+      
+      // Reload messages for the new leaf
+      const messagesResponse = await fetch(
+        `${API_URL}/v1/conversations/${currentConversation.id}/messages?leaf_id=${leafId}`
+      );
+      const messagesData = await messagesResponse.json();
+      setMessages(messagesData.data || []);
+      
+      // Reload versions for each message
+      if (messagesData.data) {
+        await Promise.all(messagesData.data.map((msg: any) => loadMessageVersions(msg.id)));
+      }
+      
+      // Update active leaf
+      const targetLeaf = leaves.find(l => l.id === leafId);
+      setActiveLeaf(targetLeaf);
+    } catch (error) {
+      console.error('Failed to switch branch:', error);
+    }
   };
 
   const deleteConversation = async (convId: string) => {
@@ -702,11 +816,41 @@ export default function App({ navigation }: { navigation?: any }) {
       </View>
       
       <View style={styles.aiToggleContainer}>
-        <View style={styles.leafSelector}>
-          <Text style={styles.leafLabel}>Branch: </Text>
-          <Text style={styles.leafName}>{activeLeaf?.name || 'main'}</Text>
-          {leaves.length > 1 && (
-            <Text style={styles.leafCount}> ({leaves.length} total)</Text>
+        <View style={styles.branchControls}>
+          <TouchableOpacity
+            style={styles.branchManagerButton}
+            onPress={() => setShowBranchManager(!showBranchManager)}
+          >
+            <Text style={styles.branchManagerButtonText}>
+              🌳 Branches ({leaves.length})
+            </Text>
+          </TouchableOpacity>
+          {showBranchManager && (
+            <View style={styles.branchList}>
+              {leaves.map(leaf => (
+                <View key={leaf.id} style={styles.branchItem}>
+                  <TouchableOpacity
+                    style={[
+                      styles.branchName,
+                      activeLeaf?.id === leaf.id && styles.branchNameActive
+                    ]}
+                    onPress={() => switchToBranch(leaf.id)}
+                  >
+                    <Text style={styles.branchNameText}>
+                      {leaf.name} {activeLeaf?.id === leaf.id && '✓'}
+                    </Text>
+                  </TouchableOpacity>
+                  {leaf.name !== 'main' && (
+                    <TouchableOpacity
+                      style={styles.branchDelete}
+                      onPress={() => deleteBranch(leaf.id)}
+                    >
+                      <Text style={styles.branchDeleteText}>✕</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ))}
+            </View>
           )}
         </View>
         
@@ -743,6 +887,32 @@ export default function App({ navigation }: { navigation?: any }) {
               styles.messageGroup,
               isOwn ? styles.ownMessageGroup : styles.otherMessageGroup
             ]}>
+              {/* Message actions menu */}
+              {showMessageMenu === msg.id && (
+                <View style={styles.messageMenu}>
+                  <TouchableOpacity
+                    style={styles.messageMenuButton}
+                    onPress={() => deleteMessage(msg.id)}
+                  >
+                    <Text style={styles.messageMenuText}>🗑️ Delete</Text>
+                  </TouchableOpacity>
+                  {index < messages.length - 1 && (
+                    <TouchableOpacity
+                      style={styles.messageMenuButton}
+                      onPress={() => pruneAfterMessage(msg.id)}
+                    >
+                      <Text style={styles.messageMenuText}>✂️ Prune After</Text>
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity
+                    style={styles.messageMenuButton}
+                    onPress={() => setShowMessageMenu(null)}
+                  >
+                    <Text style={styles.messageMenuText}>✕ Cancel</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+              
               {/* Version navigation */}
               {hasVersions && (
                 <View style={styles.versionNav}>
