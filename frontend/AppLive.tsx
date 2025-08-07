@@ -6,7 +6,7 @@ import WikiText from './src/components/WikiText';
 const API_URL = 'http://localhost:8000';
 const WS_URL = 'ws://localhost:8000';
 
-export default function App() {
+export default function App({ navigation }: { navigation?: any }) {
   const [conversations, setConversations] = useState<any[]>([]);
   const [currentConversation, setCurrentConversation] = useState<any>(null);
   const [messages, setMessages] = useState<any[]>([]);
@@ -349,7 +349,9 @@ export default function App() {
                   }}
                   onWikiTagPress={(concept) => {
                     console.log('🔗 Wiki tag clicked:', concept);
-                    // TODO: Handle wiki tag navigation
+                    if (navigation) {
+                      navigation.navigate('WikiPage', { concept });
+                    }
                   }}
                 />
                 {editingSessions.some(s => s.messageId === msg.id) && (
