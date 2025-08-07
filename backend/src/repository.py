@@ -109,6 +109,42 @@ class ConversationRepository:
             created_at=db_conv.created_at.isoformat() if db_conv.created_at else None
         )
     
+    async def update(self, conversation_id: str, update_data: Dict[str, Any]) -> Optional[Conversation]:
+        """Update a conversation's details."""
+        result = await self.session.execute(
+            select(ConversationDB).where(ConversationDB.id == conversation_id)
+        )
+        db_conv = result.scalar_one_or_none()
+        
+        if not db_conv:
+            return None
+        
+        # Update allowed fields
+        if 'title' in update_data:
+            db_conv.title = update_data['title']
+        if 'type' in update_data:
+            db_conv.type = update_data['type']
+        
+        await self.session.commit()
+        
+        # Return updated conversation
+        return await self.get(conversation_id)
+    
+    async def delete(self, conversation_id: str) -> bool:
+        """Delete a conversation and all related data."""
+        result = await self.session.execute(
+            select(ConversationDB).where(ConversationDB.id == conversation_id)
+        )
+        db_conv = result.scalar_one_or_none()
+        
+        if not db_conv:
+            return False
+        
+        # Delete conversation (cascades to messages, participants, leaves, etc.)
+        await self.session.delete(db_conv)
+        await self.session.commit()
+        return True
+    
     async def list_all(self) -> List[Conversation]:
         """List all conversations."""
         result = await self.session.execute(
@@ -166,6 +202,21 @@ class ConversationRepository:
         await self.session.commit()
         
         return message
+    
+    async def delete_message(self, conversation_id: str, message_id: str) -> bool:
+        """Delete a message and all its versions."""
+        result = await self.session.execute(
+            select(MessageDB).where(MessageDB.id == message_id)
+        )
+        db_message = result.scalar_one_or_none()
+        
+        if not db_message:
+            return False
+        
+        # Delete the message (cascades to versions)
+        await self.session.delete(db_message)
+        await self.session.commit()
+        return True
     
     async def update_message(self, conversation_id: str, message_id: str, content: str, leaf_id: Optional[str] = None) -> Optional[Message]:
         """Update a message or create a version."""
@@ -400,6 +451,34 @@ class LeafRepository:
             branch_point_message_id=db_leaf.branch_point_message_id,
             message_versions=db_leaf.message_versions or {}
         )
+    
+    async def delete(self, leaf_id: str) -> bool:
+        """Delete a leaf and all its associated data."""
+        result = await self.session.execute(
+            select(LeafDB).where(LeafDB.id == leaf_id)
+        )
+        db_leaf = result.scalar_one_or_none()
+        
+        if not db_leaf:
+            return False
+        
+        from sqlalchemy import delete
+        
+        # Delete all message versions associated with this leaf
+        await self.session.execute(
+            delete(MessageVersionDB).where(MessageVersionDB.leaf_id == leaf_id)
+        )
+        
+        # Delete all messages that were created in this leaf
+        # (messages that only exist in this branch)
+        await self.session.execute(
+            delete(MessageDB).where(MessageDB.created_in_leaf_id == leaf_id)
+        )
+        
+        # Delete the leaf itself
+        await self.session.delete(db_leaf)
+        await self.session.commit()
+        return True
     
     async def set_active(self, conversation_id: str, leaf_id: str) -> bool:
         """Set the active leaf for a conversation."""

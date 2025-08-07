@@ -17,9 +17,15 @@ export default function App({ navigation }: { navigation?: any }) {
   const [loading, setLoading] = useState(true);
   const [currentUserId, setCurrentUserId] = useState('user-1');
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
-  // Debug: Track editingMessageId changes
-  useEffect(() => {
-  }, [editingMessageId]);
+  
+  // Sidebar state
+  const [sidebarVisible, setSidebarVisible] = useState(true);
+  const [allConversations, setAllConversations] = useState<any[]>([]);
+  const [editingConvId, setEditingConvId] = useState<string | null>(null);
+  const [editingConvTitle, setEditingConvTitle] = useState('');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
+  const [showMessageMenu, setShowMessageMenu] = useState<string | null>(null);
+  const [showBranchManager, setShowBranchManager] = useState(false);
   const [editingText, setEditingText] = useState('');
   const [aiProactive, setAiProactive] = useState(false);
   const [lastClickTime, setLastClickTime] = useState<{[key: string]: number}>({});
@@ -44,31 +50,37 @@ export default function App({ navigation }: { navigation?: any }) {
 
   // Load conversations on mount
   useEffect(() => {
-    fetch(`${API_URL}/v1/conversations`)
-      .then(res => res.json())
-      .then(data => {
+    const loadInitialData = async () => {
+      try {
+        const res = await fetch(`${API_URL}/v1/conversations`);
+        const data = await res.json();
         const convs = data.data || [];
+        setAllConversations(convs);
+        
         if (convs.length > 0) {
-          selectConversation(convs[0]);
+          await selectConversation(convs[0]);
         } else {
-          createNewConversation();
+          await createNewConversation();
         }
-      })
-      .catch(err => {
+      } catch (err) {
         console.error('Failed to load conversations:', err);
         setLoading(false);
-      });
+      }
+    };
+    
+    loadInitialData();
   }, []);
 
   const createNewConversation = async () => {
     try {
+      const conversationNumber = allConversations.filter(c => c.type === 'chat').length + 1;
       const response = await fetch(`${API_URL}/v1/conversations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: `conv-${Date.now()}`,
           type: 'chat',
-          title: 'Live Chat',
+          title: `Chat ${conversationNumber}`,
           participants: [
             { id: 'user-1', type: 'human', name: 'You' },
             { id: 'ai-1', type: 'ai', name: 'Assistant' }
@@ -78,6 +90,7 @@ export default function App({ navigation }: { navigation?: any }) {
         })
       });
       const conv = await response.json();
+      setAllConversations(prev => [...prev, conv]);
       selectConversation(conv);
     } catch (error) {
       console.error('Failed to create conversation:', error);
@@ -86,7 +99,21 @@ export default function App({ navigation }: { navigation?: any }) {
   };
 
   const selectConversation = async (conv: any) => {
+    // Clean up existing connections
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+    if (providerRef.current) {
+      providerRef.current.destroy();
+      providerRef.current = null;
+    }
+    
+    // Clear previous message versions BEFORE setting new conversation
+    setMessageVersions({});
+    
     setCurrentConversation(conv);
+    setLoading(true);
     
     // Load leaves first
     try {
@@ -110,9 +137,8 @@ export default function App({ navigation }: { navigation?: any }) {
       
       // Load versions for each message
       if (data.data) {
-        for (const msg of data.data) {
-          loadMessageVersions(msg.id);
-        }
+        // Load all versions in parallel
+        await Promise.all(data.data.map((msg: any) => loadMessageVersions(msg.id, conv.id)));
       }
     } catch (error) {
       console.error('Failed to load messages:', error);
@@ -308,11 +334,12 @@ export default function App({ navigation }: { navigation?: any }) {
   };
 
   // Load versions for a message
-  const loadMessageVersions = async (messageId: string) => {
-    if (!currentConversation) return;
+  const loadMessageVersions = async (messageId: string, conversationId?: string) => {
+    const convId = conversationId || currentConversation?.id;
+    if (!convId) return;
     
     try {
-      const response = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/messages/${messageId}/versions`);
+      const response = await fetch(`${API_URL}/v1/conversations/${convId}/messages/${messageId}/versions`);
       const data = await response.json();
       setMessageVersions(prev => ({
         ...prev,
@@ -440,6 +467,177 @@ export default function App({ navigation }: { navigation?: any }) {
   };
 
   // Handle double-click detection
+  const startEditingConversation = (conv: any) => {
+    setEditingConvId(conv.id);
+    setEditingConvTitle(conv.title);
+  };
+
+  const saveConversationTitle = async (convId: string) => {
+    if (!editingConvTitle.trim()) {
+      setEditingConvId(null);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/v1/conversations/${convId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: editingConvTitle })
+      });
+
+      if (response.ok) {
+        const updated = await response.json();
+        setAllConversations(prev => 
+          prev.map(c => c.id === convId ? { ...c, title: updated.title } : c)
+        );
+        if (currentConversation?.id === convId) {
+          setCurrentConversation(prev => ({ ...prev, title: updated.title }));
+        }
+      }
+    } catch (error) {
+      console.error('Failed to update conversation title:', error);
+    }
+    
+    setEditingConvId(null);
+  };
+
+  const deleteMessage = async (messageId: string) => {
+    if (!currentConversation) return;
+    
+    try {
+      const response = await fetch(
+        `${API_URL}/v1/conversations/${currentConversation.id}/messages/${messageId}`,
+        { method: 'DELETE' }
+      );
+      
+      if (response.ok) {
+        // Remove from local state
+        setMessages(prev => prev.filter(m => m.id !== messageId));
+      }
+    } catch (error) {
+      console.error('Failed to delete message:', error);
+    }
+    
+    setShowMessageMenu(null);
+  };
+  
+  const pruneAfterMessage = async (messageId: string) => {
+    if (!currentConversation) return;
+    
+    try {
+      const response = await fetch(
+        `${API_URL}/v1/conversations/${currentConversation.id}/messages/prune`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            after_message_id: messageId,
+            leaf_id: activeLeaf?.id
+          })
+        }
+      );
+      
+      if (response.ok) {
+        // Reload messages
+        const messagesResponse = await fetch(
+          `${API_URL}/v1/conversations/${currentConversation.id}/messages?leaf_id=${activeLeaf?.id}`
+        );
+        const messagesData = await messagesResponse.json();
+        setMessages(messagesData.data || []);
+      }
+    } catch (error) {
+      console.error('Failed to prune messages:', error);
+    }
+    
+    setShowMessageMenu(null);
+  };
+  
+  const deleteBranch = async (leafId: string) => {
+    if (!currentConversation) return;
+    
+    try {
+      const response = await fetch(
+        `${API_URL}/v1/conversations/${currentConversation.id}/leaves/${leafId}`,
+        { method: 'DELETE' }
+      );
+      
+      if (response.ok) {
+        // Reload leaves
+        const leavesResponse = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/leaves`);
+        const leavesData = await leavesResponse.json();
+        setLeaves(leavesData.leaves || []);
+        setActiveLeaf(leavesData.leaves?.find((l: any) => l.id === leavesData.active_leaf_id));
+        
+        // Reload messages for new active leaf
+        const messagesResponse = await fetch(
+          `${API_URL}/v1/conversations/${currentConversation.id}/messages?leaf_id=${leavesData.active_leaf_id}`
+        );
+        const messagesData = await messagesResponse.json();
+        setMessages(messagesData.data || []);
+      }
+    } catch (error) {
+      console.error('Failed to delete branch:', error);
+    }
+  };
+  
+  const switchToBranch = async (leafId: string) => {
+    if (!currentConversation) return;
+    
+    try {
+      // Switch active leaf
+      await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/leaves/active`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leaf_id: leafId })
+      });
+      
+      // Reload messages for the new leaf
+      const messagesResponse = await fetch(
+        `${API_URL}/v1/conversations/${currentConversation.id}/messages?leaf_id=${leafId}`
+      );
+      const messagesData = await messagesResponse.json();
+      setMessages(messagesData.data || []);
+      
+      // Reload versions for each message
+      if (messagesData.data) {
+        await Promise.all(messagesData.data.map((msg: any) => loadMessageVersions(msg.id)));
+      }
+      
+      // Update active leaf
+      const targetLeaf = leaves.find(l => l.id === leafId);
+      setActiveLeaf(targetLeaf);
+    } catch (error) {
+      console.error('Failed to switch branch:', error);
+    }
+  };
+
+  const deleteConversation = async (convId: string) => {
+    try {
+      const response = await fetch(`${API_URL}/v1/conversations/${convId}`, {
+        method: 'DELETE'
+      });
+
+      if (response.ok) {
+        // Remove from list
+        const updatedConvs = allConversations.filter(c => c.id !== convId);
+        setAllConversations(updatedConvs);
+        
+        // If deleting current conversation, switch to another or create new
+        if (currentConversation?.id === convId) {
+          if (updatedConvs.length > 0) {
+            selectConversation(updatedConvs[0]);
+          } else {
+            createNewConversation();
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to delete conversation:', error);
+    }
+    
+    setShowDeleteConfirm(null);
+  };
+
   const handleDoubleClick = (messageId: string, messageContent: string) => {
     const now = Date.now();
     const lastClick = lastClickTime[messageId] || 0;
@@ -468,9 +666,107 @@ export default function App({ navigation }: { navigation?: any }) {
 
 
   return (
-    <View style={styles.container}>
+    <View style={styles.appContainer}>
+      {/* Sidebar */}
+      <View style={[styles.sidebar, !sidebarVisible && styles.sidebarHidden]}>
+        <TouchableOpacity style={styles.newConvButton} onPress={createNewConversation}>
+          <Text style={styles.newConvButtonText}>+ New Chat</Text>
+        </TouchableOpacity>
+        
+        <ScrollView style={styles.convList}>
+          {allConversations.map(conv => (
+            <View key={conv.id} style={[
+              styles.convItem,
+              conv.id === currentConversation?.id && styles.convItemActive
+            ]}>
+              {editingConvId === conv.id ? (
+                // Edit mode
+                <View style={styles.convEditContainer}>
+                  <TextInput
+                    style={styles.convEditInput}
+                    value={editingConvTitle}
+                    onChangeText={setEditingConvTitle}
+                    onBlur={() => saveConversationTitle(conv.id)}
+                    onSubmitEditing={() => saveConversationTitle(conv.id)}
+                    autoFocus
+                    selectTextOnFocus
+                  />
+                  <TouchableOpacity
+                    style={styles.convEditButton}
+                    onPress={() => saveConversationTitle(conv.id)}
+                  >
+                    <Text style={styles.convEditButtonText}>✓</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.convEditButton}
+                    onPress={() => setEditingConvId(null)}
+                  >
+                    <Text style={styles.convEditButtonText}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : showDeleteConfirm === conv.id ? (
+                // Delete confirmation
+                <View style={styles.convDeleteConfirm}>
+                  <Text style={styles.convDeleteText}>Delete?</Text>
+                  <TouchableOpacity
+                    style={styles.convDeleteYes}
+                    onPress={() => deleteConversation(conv.id)}
+                  >
+                    <Text style={styles.convDeleteYesText}>Yes</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.convDeleteNo}
+                    onPress={() => setShowDeleteConfirm(null)}
+                  >
+                    <Text style={styles.convDeleteNoText}>No</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                // Normal mode
+                <TouchableOpacity
+                  style={styles.convContent}
+                  onPress={() => selectConversation(conv)}
+                  onLongPress={() => startEditingConversation(conv)}
+                >
+                  <Text style={styles.convIcon}>
+                    {conv.type === 'wiki' ? '📚' : '💬'}
+                  </Text>
+                  <Text style={styles.convTitle} numberOfLines={1}>
+                    {conv.title}
+                  </Text>
+                </TouchableOpacity>
+              )}
+              {editingConvId !== conv.id && showDeleteConfirm !== conv.id && (
+                <View style={styles.convActions}>
+                  <TouchableOpacity
+                    style={styles.convActionButton}
+                    onPress={() => startEditingConversation(conv)}
+                  >
+                    <Text style={styles.convActionText}>✏️</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.convActionButton}
+                    onPress={() => setShowDeleteConfirm(conv.id)}
+                  >
+                    <Text style={styles.convActionText}>🗑️</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          ))}
+        </ScrollView>
+      </View>
+      
+      {/* Main Chat Area */}
+      <View style={styles.mainContent}>
       <View style={styles.header}>
         <View style={styles.headerLeft}>
+          <TouchableOpacity 
+            style={styles.sidebarToggle}
+            onPress={() => setSidebarVisible(!sidebarVisible)}
+          >
+            <Text style={styles.hamburgerIcon}>☰</Text>
+          </TouchableOpacity>
           <Text style={styles.title}>
             {currentConversation?.title || 'Chat'} 
           </Text>
@@ -492,11 +788,41 @@ export default function App({ navigation }: { navigation?: any }) {
       </View>
       
       <View style={styles.aiToggleContainer}>
-        <View style={styles.leafSelector}>
-          <Text style={styles.leafLabel}>Branch: </Text>
-          <Text style={styles.leafName}>{activeLeaf?.name || 'main'}</Text>
-          {leaves.length > 1 && (
-            <Text style={styles.leafCount}> ({leaves.length} total)</Text>
+        <View style={styles.branchControls}>
+          <TouchableOpacity
+            style={styles.branchManagerButton}
+            onPress={() => setShowBranchManager(!showBranchManager)}
+          >
+            <Text style={styles.branchManagerButtonText}>
+              🌳 Branches ({leaves.length})
+            </Text>
+          </TouchableOpacity>
+          {showBranchManager && (
+            <View style={styles.branchList}>
+              {leaves.map(leaf => (
+                <View key={leaf.id} style={styles.branchItem}>
+                  <TouchableOpacity
+                    style={[
+                      styles.branchName,
+                      activeLeaf?.id === leaf.id && styles.branchNameActive
+                    ]}
+                    onPress={() => switchToBranch(leaf.id)}
+                  >
+                    <Text style={styles.branchNameText}>
+                      {leaf.name} {activeLeaf?.id === leaf.id && '✓'}
+                    </Text>
+                  </TouchableOpacity>
+                  {leaf.name !== 'main' && (
+                    <TouchableOpacity
+                      style={styles.branchDelete}
+                      onPress={() => deleteBranch(leaf.id)}
+                    >
+                      <Text style={styles.branchDeleteText}>✕</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ))}
+            </View>
           )}
         </View>
         
@@ -533,6 +859,32 @@ export default function App({ navigation }: { navigation?: any }) {
               styles.messageGroup,
               isOwn ? styles.ownMessageGroup : styles.otherMessageGroup
             ]}>
+              {/* Message actions menu */}
+              {showMessageMenu === msg.id && (
+                <View style={styles.messageMenu}>
+                  <TouchableOpacity
+                    style={styles.messageMenuButton}
+                    onPress={() => deleteMessage(msg.id)}
+                  >
+                    <Text style={styles.messageMenuText}>🗑️ Delete</Text>
+                  </TouchableOpacity>
+                  {index < messages.length - 1 && (
+                    <TouchableOpacity
+                      style={styles.messageMenuButton}
+                      onPress={() => pruneAfterMessage(msg.id)}
+                    >
+                      <Text style={styles.messageMenuText}>✂️ Prune After</Text>
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity
+                    style={styles.messageMenuButton}
+                    onPress={() => setShowMessageMenu(null)}
+                  >
+                    <Text style={styles.messageMenuText}>✕ Cancel</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+              
               {/* Version navigation */}
               {hasVersions && (
                 <View style={styles.versionNav}>
@@ -590,51 +942,7 @@ export default function App({ navigation }: { navigation?: any }) {
                   <TouchableOpacity
                     style={styles.floatingMessage}
                     onPress={() => handleDoubleClick(msg.id, msg.content)}
-                    onLongPress={async () => {
-                      // Check if this is not the last message (editing old message)
-                      const isOldMessage = index < messages.length - 1;
-                      
-                      if (isOldMessage) {
-                        // Create a new branch/leaf
-                        const response = await fetch(
-                          `${API_URL}/v1/conversations/${currentConversation.id}/leaves`,
-                          {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                              branch_from_message_id: msg.id,
-                              name: `edit-${msg.id.slice(0, 8)}`
-                            })
-                          }
-                        );
-                        
-                        if (response.ok) {
-                          const newLeaf = await response.json();
-                          setActiveLeaf(newLeaf);
-                          
-                          // Reload leaves
-                          const leavesResponse = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/leaves`);
-                          const leavesData = await leavesResponse.json();
-                          setLeaves(leavesData.leaves || []);
-                          
-                          // Switch active leaf on backend
-                          await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/leaves/active`, {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ leaf_id: newLeaf.id })
-                          });
-                          
-                          // Reload messages for the new leaf
-                          const messagesResponse = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/messages?leaf_id=${newLeaf.id}`);
-                          const messagesData = await messagesResponse.json();
-                          setMessages(messagesData.data || []);
-                        }
-                      }
-                      
-                      setEditingMessageId(msg.id);
-                      setEditingText(msg.content);
-                      startEditing(msg.id);
-                    }}
+                    onLongPress={() => setShowMessageMenu(msg.id)}
                   >
                     <WikiText 
                       text={msg.content}
@@ -802,11 +1110,142 @@ export default function App({ navigation }: { navigation?: any }) {
 
 
       <StatusBar style="auto" />
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  appContainer: {
+    flex: 1,
+    flexDirection: 'row',
+  },
+  sidebar: {
+    width: 250,
+    backgroundColor: '#f5f5f5',
+    borderRightWidth: 1,
+    borderRightColor: '#e0e0e0',
+  },
+  sidebarHidden: {
+    width: 0,
+    overflow: 'hidden',
+  },
+  newConvButton: {
+    margin: 10,
+    padding: 12,
+    backgroundColor: '#007AFF',
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  newConvButtonText: {
+    color: 'white',
+    fontWeight: '600',
+  },
+  convList: {
+    flex: 1,
+  },
+  convItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  convItemActive: {
+    backgroundColor: '#e3f2fd',
+  },
+  convContent: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+  },
+  convIcon: {
+    fontSize: 16,
+    marginRight: 8,
+  },
+  convTitle: {
+    flex: 1,
+    fontSize: 14,
+  },
+  convActions: {
+    flexDirection: 'row',
+    paddingRight: 8,
+  },
+  convActionButton: {
+    padding: 4,
+    marginLeft: 4,
+  },
+  convActionText: {
+    fontSize: 14,
+  },
+  convEditContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 8,
+  },
+  convEditInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#007AFF',
+    borderRadius: 4,
+    padding: 6,
+    fontSize: 14,
+    backgroundColor: 'white',
+  },
+  convEditButton: {
+    padding: 6,
+    marginLeft: 4,
+  },
+  convEditButtonText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  convDeleteConfirm: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 12,
+    backgroundColor: '#fff3cd',
+  },
+  convDeleteText: {
+    fontSize: 14,
+    color: '#856404',
+  },
+  convDeleteYes: {
+    backgroundColor: '#dc3545',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  convDeleteYesText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  convDeleteNo: {
+    backgroundColor: '#6c757d',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  convDeleteNoText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  mainContent: {
+    flex: 1,
+    backgroundColor: '#fafafa',
+  },
+  sidebarToggle: {
+    padding: 8,
+    marginRight: 8,
+  },
+  hamburgerIcon: {
+    fontSize: 20,
+  },
   container: {
     flex: 1,
     backgroundColor: '#fafafa', // Subtle off-white background
@@ -1174,5 +1613,80 @@ const styles = StyleSheet.create({
   aiToggleRow: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  messageMenu: {
+    position: 'absolute',
+    top: -5,
+    right: 10,
+    backgroundColor: 'white',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 5,
+    zIndex: 1000,
+  },
+  messageMenuButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  messageMenuText: {
+    fontSize: 14,
+    color: '#333',
+  },
+  branchControls: {
+    marginBottom: 8,
+  },
+  branchManagerButton: {
+    backgroundColor: '#f0f0f0',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  branchManagerButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+  },
+  branchList: {
+    backgroundColor: 'white',
+    borderRadius: 8,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    padding: 8,
+  },
+  branchItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 6,
+  },
+  branchName: {
+    flex: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  branchNameActive: {
+    backgroundColor: '#e3f2fd',
+  },
+  branchNameText: {
+    fontSize: 14,
+    color: '#333',
+  },
+  branchDelete: {
+    padding: 4,
+    marginLeft: 8,
+  },
+  branchDeleteText: {
+    fontSize: 16,
+    color: '#dc3545',
+    fontWeight: 'bold',
   },
 });

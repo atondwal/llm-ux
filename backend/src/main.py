@@ -189,6 +189,31 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Conversation not found")
         return conversation
     
+    @app.patch("/v1/conversations/{conversation_id}")
+    async def update_conversation(
+        conversation_id: str, 
+        update_data: Dict[str, Any],
+        db: AsyncSession = Depends(get_db)
+    ) -> Conversation:
+        """Update conversation details (e.g., title)."""
+        repo = ConversationRepository(db)
+        conversation = await repo.update(conversation_id, update_data)
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        return conversation
+    
+    @app.delete("/v1/conversations/{conversation_id}")
+    async def delete_conversation(
+        conversation_id: str,
+        db: AsyncSession = Depends(get_db)
+    ) -> Dict[str, str]:
+        """Delete a conversation and all its messages."""
+        repo = ConversationRepository(db)
+        success = await repo.delete(conversation_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        return {"message": "Conversation deleted successfully"}
+    
     @app.get("/v1/conversations/{conversation_id}/messages")
     async def get_messages(conversation_id: str, leaf_id: Optional[str] = None, db: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
         """Get all messages from a conversation, optionally filtered by leaf."""
@@ -238,6 +263,27 @@ def create_app() -> FastAPI:
         response = message.model_dump()
         response["leaf_id"] = active_leaf.id if active_leaf else "main"
         return response
+    
+    @app.delete("/v1/conversations/{conversation_id}/messages/{message_id}")
+    async def delete_message(
+        conversation_id: str,
+        message_id: str,
+        db: AsyncSession = Depends(get_db)
+    ) -> Dict[str, str]:
+        """Delete a message and all its versions."""
+        repo = ConversationRepository(db)
+        
+        # Check conversation exists
+        conversation = await repo.get(conversation_id)
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        # Delete the message
+        success = await repo.delete_message(conversation_id, message_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Message not found")
+        
+        return {"message": "Message deleted successfully"}
     
     @app.put("/v1/conversations/{conversation_id}/messages/{message_id}")
     async def update_message(
@@ -339,6 +385,87 @@ def create_app() -> FastAPI:
         )
         
         return new_leaf
+    
+    @app.delete("/v1/conversations/{conversation_id}/leaves/{leaf_id}")
+    async def delete_leaf(
+        conversation_id: str,
+        leaf_id: str,
+        db: AsyncSession = Depends(get_db)
+    ) -> Dict[str, str]:
+        """Delete a leaf/branch and all its associated data."""
+        # Check conversation exists
+        conv_repo = ConversationRepository(db)
+        conversation = await conv_repo.get(conversation_id)
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        leaf_repo = LeafRepository(db)
+        
+        # Don't allow deleting the main leaf
+        all_leaves = await leaf_repo.get_all(conversation_id)
+        target_leaf = next((l for l in all_leaves if l.id == leaf_id), None)
+        
+        if not target_leaf:
+            raise HTTPException(status_code=404, detail="Leaf not found")
+        
+        if target_leaf.name == "main":
+            raise HTTPException(status_code=400, detail="Cannot delete main branch")
+        
+        # If this is the active leaf, switch to main first
+        active_leaf = await leaf_repo.get_active(conversation_id)
+        if active_leaf and active_leaf.id == leaf_id:
+            main_leaf = next((l for l in all_leaves if l.name == "main"), None)
+            if main_leaf:
+                await leaf_repo.set_active(conversation_id, main_leaf.id)
+        
+        # Delete the leaf
+        success = await leaf_repo.delete(leaf_id)
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to delete leaf")
+        
+        return {"message": "Branch deleted successfully"}
+    
+    @app.post("/v1/conversations/{conversation_id}/messages/prune")
+    async def prune_messages_after(
+        conversation_id: str,
+        request: Dict[str, str],
+        db: AsyncSession = Depends(get_db)
+    ) -> Dict[str, Any]:
+        """Delete all messages after a given message in the current leaf."""
+        message_id = request.get("after_message_id")
+        leaf_id = request.get("leaf_id")
+        
+        if not message_id:
+            raise HTTPException(status_code=400, detail="after_message_id is required")
+        
+        conv_repo = ConversationRepository(db)
+        conversation = await conv_repo.get(conversation_id)
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        # Get messages for the leaf
+        messages = await conv_repo.get_messages(conversation_id, leaf_id)
+        
+        # Find the index of the message to prune after
+        prune_index = -1
+        for i, msg in enumerate(messages):
+            if msg["id"] == message_id:
+                prune_index = i
+                break
+        
+        if prune_index == -1:
+            raise HTTPException(status_code=404, detail="Message not found")
+        
+        # Delete all messages after this one
+        deleted_count = 0
+        for msg in messages[prune_index + 1:]:
+            if await conv_repo.delete_message(conversation_id, msg["id"]):
+                deleted_count += 1
+        
+        return {
+            "message": f"Pruned {deleted_count} messages",
+            "deleted_count": deleted_count
+        }
     
     @app.put("/v1/conversations/{conversation_id}/leaves/active")
     async def switch_active_leaf(
