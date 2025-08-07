@@ -1,6 +1,7 @@
 import { StatusBar } from 'expo-status-bar';
 import { StyleSheet, View, Text, Button, ScrollView, TextInput, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useState, useEffect, useRef } from 'react';
+import WikiText from './src/components/WikiText';
 
 const API_URL = 'http://localhost:8000';
 const WS_URL = 'ws://localhost:8000';
@@ -335,12 +336,22 @@ export default function App() {
                   startEditing(msg.id);
                 }}
               >
-                <Text style={[
-                  styles.messageText, 
-                  isOwn ? styles.ownMessageText : styles.otherMessageText
-                ]}>
-                  {msg.content}
-                </Text>
+                <WikiText 
+                  text={msg.content}
+                  textStyle={[
+                    styles.messageText, 
+                    isOwn ? styles.ownMessageText : styles.otherMessageText
+                  ]}
+                  wikiTagStyle={{
+                    color: isOwn ? '#4A90E2' : '#007AFF',
+                    textDecorationLine: 'underline',
+                    fontWeight: '600'
+                  }}
+                  onWikiTagPress={(concept) => {
+                    console.log('🔗 Wiki tag clicked:', concept);
+                    // TODO: Handle wiki tag navigation
+                  }}
+                />
                 {editingSessions.some(s => s.messageId === msg.id) && (
                   <Text style={styles.editIndicator}>✏️ Being edited</Text>
                 )}
