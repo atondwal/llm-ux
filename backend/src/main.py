@@ -25,7 +25,11 @@ from .websocket_models import (
     WSMessageBroadcast,
     WSTypingIndicator,
     WSPresenceUpdate,
-    WSErrorMessage
+    WSErrorMessage,
+    WSEditingStart,
+    WSEditingStarted,
+    WSEditingStop,
+    WSEditingStopped
 )
 
 
@@ -47,6 +51,7 @@ def create_app() -> FastAPI:
         def __init__(self):
             self.active_connections: Dict[str, List[WebSocket]] = {}
             self.user_count: Dict[str, int] = {}
+            self.editing_sessions: Dict[str, Set[str]] = {}  # messageId -> set of userIds
         
         async def connect(self, websocket: WebSocket, conversation_id: str):
             await websocket.accept()
@@ -55,6 +60,20 @@ def create_app() -> FastAPI:
                 self.user_count[conversation_id] = 0
             self.active_connections[conversation_id].append(websocket)
             self.user_count[conversation_id] += 1
+        
+        def start_editing(self, message_id: str, user_id: str):
+            if message_id not in self.editing_sessions:
+                self.editing_sessions[message_id] = set()
+            self.editing_sessions[message_id].add(user_id)
+        
+        def stop_editing(self, message_id: str, user_id: str):
+            if message_id in self.editing_sessions:
+                self.editing_sessions[message_id].discard(user_id)
+                if not self.editing_sessions[message_id]:
+                    del self.editing_sessions[message_id]
+        
+        def get_editors(self, message_id: str) -> List[str]:
+            return list(self.editing_sessions.get(message_id, set()))
             
         def disconnect(self, websocket: WebSocket, conversation_id: str):
             if conversation_id in self.active_connections:
@@ -123,6 +142,19 @@ def create_app() -> FastAPI:
         
         return message
     
+    
+    @app.get("/v1/conversations/{conversation_id}/messages/{message_id}/editors")
+    async def get_active_editors(conversation_id: str, message_id: str) -> Dict[str, List[str]]:
+        """Get list of users currently editing a message."""
+        if conversation_id not in conversations:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        # Check message exists
+        message_exists = any(msg.id == message_id for msg in conversations[conversation_id].messages)
+        if not message_exists:
+            raise HTTPException(status_code=404, detail="Message not found")
+        
+        return {"editors": manager.get_editors(message_id)}
     
     @app.post("/v1/chat/completions")
     async def create_chat_completion(request: ChatCompletionRequest) -> ChatCompletionResponse:
@@ -212,6 +244,24 @@ def create_app() -> FastAPI:
                     # Validate and broadcast typing indicator
                     typing_msg = WSTypingIndicator(**message_dict)
                     await manager.broadcast(typing_msg.model_dump_json(), conversation_id, exclude=websocket)
+                
+                elif message_dict.get("type") == "start_editing":
+                    # Start editing session
+                    edit_start = WSEditingStart(**message_dict)
+                    manager.start_editing(edit_start.messageId, edit_start.userId)
+                    
+                    # Broadcast to all clients
+                    started_msg = WSEditingStarted(messageId=edit_start.messageId, userId=edit_start.userId)
+                    await manager.send_to_all(started_msg.model_dump_json(), conversation_id)
+                
+                elif message_dict.get("type") == "stop_editing":
+                    # Stop editing session
+                    edit_stop = WSEditingStop(**message_dict)
+                    manager.stop_editing(edit_stop.messageId, edit_stop.userId)
+                    
+                    # Broadcast to all clients
+                    stopped_msg = WSEditingStopped(messageId=edit_stop.messageId, userId=edit_stop.userId)
+                    await manager.send_to_all(stopped_msg.model_dump_json(), conversation_id)
                 
                 else:
                     # Unknown message type

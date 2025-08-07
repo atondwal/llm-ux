@@ -58,3 +58,43 @@ class WSErrorMessage(BaseModel):
     """Error message for WebSocket."""
     type: Literal["error"] = "error"
     message: str
+
+
+class WSEditingStart(BaseModel):
+    """Start editing a message."""
+    type: Literal["start_editing"] = "start_editing"
+    messageId: str = Field(..., alias="messageId")
+    userId: str = Field(..., alias="userId")
+    
+    class Config:
+        populate_by_name = True
+
+
+class WSEditingStarted(BaseModel):
+    """Editing session started."""
+    type: Literal["editing_started"] = "editing_started"
+    messageId: str = Field(..., alias="messageId")
+    userId: str = Field(..., alias="userId")
+    
+    class Config:
+        populate_by_name = True
+
+
+class WSEditingStop(BaseModel):
+    """Stop editing a message."""
+    type: Literal["stop_editing"] = "stop_editing"
+    messageId: str = Field(..., alias="messageId")
+    userId: str = Field(..., alias="userId")
+    
+    class Config:
+        populate_by_name = True
+
+
+class WSEditingStopped(BaseModel):
+    """Editing session stopped."""
+    type: Literal["editing_stopped"] = "editing_stopped"
+    messageId: str = Field(..., alias="messageId")
+    userId: str = Field(..., alias="userId")
+    
+    class Config:
+        populate_by_name = True
