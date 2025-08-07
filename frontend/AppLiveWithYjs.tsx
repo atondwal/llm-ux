@@ -1,7 +1,8 @@
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, View, Text, ScrollView, TextInput, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { StyleSheet, View, Text, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, Modal } from 'react-native';
 import { useState, useEffect, useRef } from 'react';
 import WikiText from './src/components/WikiText';
+import CollaborativeEditor from './src/components/CollaborativeEditor';
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
 
@@ -18,6 +19,8 @@ export default function App({ navigation }: { navigation?: any }) {
   const [currentUserId, setCurrentUserId] = useState('user-1');
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
+  const [aiProactive, setAiProactive] = useState(false);
+  const [showCollaborativeView, setShowCollaborativeView] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   
   // Yjs document and provider refs for collaborative editing
@@ -286,12 +289,53 @@ export default function App({ navigation }: { navigation?: any }) {
     );
   }
 
+  // Collaborative Document View Modal
+  if (showCollaborativeView && currentConversation) {
+    return (
+      <Modal
+        visible={true}
+        animationType="slide"
+        presentationStyle="fullScreen"
+      >
+        <View style={styles.fullScreenContainer}>
+          <View style={styles.collaborativeHeader}>
+            <Text style={styles.collaborativeTitle}>{currentConversation.title}</Text>
+            <TouchableOpacity
+              onPress={() => setShowCollaborativeView(false)}
+              style={styles.closeButton}
+            >
+              <Text style={styles.closeButtonText}>✕</Text>
+            </TouchableOpacity>
+          </View>
+          <CollaborativeEditor
+            documentId={currentConversation.id}
+            userId={currentUserId}
+            userName={`User-${currentUserId}`}
+            onContentChange={(content) => {
+              console.log('Document content changed:', content);
+            }}
+          />
+        </View>
+      </Modal>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>
-          {currentConversation?.title || 'Chat'} 
-        </Text>
+        <View style={styles.headerLeft}>
+          <Text style={styles.title}>
+            {currentConversation?.title || 'Chat'} 
+          </Text>
+          <TouchableOpacity
+            onPress={() => setShowCollaborativeView(!showCollaborativeView)}
+            style={styles.collaborativeButton}
+          >
+            <Text style={styles.collaborativeButtonText}>
+              {showCollaborativeView ? '💬 Chat View' : '📝 Doc View'}
+            </Text>
+          </TouchableOpacity>
+        </View>
         <View style={styles.headerRight}>
           <View style={styles.userPicker}>
             <Text style={styles.userLabel}>You: </Text>
@@ -306,6 +350,16 @@ export default function App({ navigation }: { navigation?: any }) {
             {wsConnected ? '🟢 Connected' : '🔴 Disconnected'}
           </Text>
         </View>
+      </View>
+      
+      <View style={styles.aiToggleContainer}>
+        <Text style={styles.aiToggleLabel}>AI Proactive Mode:</Text>
+        <TouchableOpacity
+          onPress={() => setAiProactive(!aiProactive)}
+          style={[styles.aiToggle, aiProactive && styles.aiToggleActive]}
+        >
+          <Text style={styles.aiToggleText}>{aiProactive ? 'ON' : 'OFF'}</Text>
+        </TouchableOpacity>
       </View>
       
       {editingSessions.length > 0 && (
@@ -452,6 +506,75 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#fff',
+  },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  collaborativeButton: {
+    backgroundColor: '#4ECDC4',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 5,
+  },
+  collaborativeButtonText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  aiToggleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    backgroundColor: '#f8f8f8',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  aiToggleLabel: {
+    fontSize: 14,
+    color: '#666',
+    marginRight: 10,
+  },
+  aiToggle: {
+    backgroundColor: '#ddd',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  aiToggleActive: {
+    backgroundColor: '#4ECDC4',
+  },
+  aiToggleText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  fullScreenContainer: {
+    flex: 1,
+    backgroundColor: '#fff',
+  },
+  collaborativeHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    paddingTop: 60,
+    backgroundColor: '#f0f0f0',
+    borderBottomWidth: 1,
+    borderBottomColor: '#ddd',
+  },
+  collaborativeTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  closeButton: {
+    padding: 10,
+  },
+  closeButtonText: {
+    fontSize: 24,
+    color: '#666',
   },
   centered: {
     justifyContent: 'center',
