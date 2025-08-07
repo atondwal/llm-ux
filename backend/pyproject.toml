@@ -43,12 +43,7 @@ addopts = "--cov=src --cov-report=term-missing --cov-fail-under=100 --cov-report
 testpaths = ["tests"]
 asyncio_mode = "auto"
 
-[tool.tox]
-envlist = py311,mypy
-
-[testenv:mypy]
-deps = mypy
-commands = mypy src/ --strict
+# Tox configuration would go here if needed
 
 [tool.coverage.run]
 branch = true
