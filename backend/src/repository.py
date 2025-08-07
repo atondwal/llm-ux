@@ -203,6 +203,21 @@ class ConversationRepository:
         
         return message
     
+    async def delete_message(self, conversation_id: str, message_id: str) -> bool:
+        """Delete a message and all its versions."""
+        result = await self.session.execute(
+            select(MessageDB).where(MessageDB.id == message_id)
+        )
+        db_message = result.scalar_one_or_none()
+        
+        if not db_message:
+            return False
+        
+        # Delete the message (cascades to versions)
+        await self.session.delete(db_message)
+        await self.session.commit()
+        return True
+    
     async def update_message(self, conversation_id: str, message_id: str, content: str, leaf_id: Optional[str] = None) -> Optional[Message]:
         """Update a message or create a version."""
         result = await self.session.execute(
@@ -436,6 +451,26 @@ class LeafRepository:
             branch_point_message_id=db_leaf.branch_point_message_id,
             message_versions=db_leaf.message_versions or {}
         )
+    
+    async def delete(self, leaf_id: str) -> bool:
+        """Delete a leaf and all its associated versions."""
+        result = await self.session.execute(
+            select(LeafDB).where(LeafDB.id == leaf_id)
+        )
+        db_leaf = result.scalar_one_or_none()
+        
+        if not db_leaf:
+            return False
+        
+        # Delete all message versions associated with this leaf
+        await self.session.execute(
+            select(MessageVersionDB).where(MessageVersionDB.leaf_id == leaf_id)
+        )
+        
+        # Delete the leaf
+        await self.session.delete(db_leaf)
+        await self.session.commit()
+        return True
     
     async def set_active(self, conversation_id: str, leaf_id: str) -> bool:
         """Set the active leaf for a conversation."""

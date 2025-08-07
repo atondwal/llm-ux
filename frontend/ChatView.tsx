@@ -800,51 +800,7 @@ export default function App({ navigation }: { navigation?: any }) {
                   <TouchableOpacity
                     style={styles.floatingMessage}
                     onPress={() => handleDoubleClick(msg.id, msg.content)}
-                    onLongPress={async () => {
-                      // Check if this is not the last message (editing old message)
-                      const isOldMessage = index < messages.length - 1;
-                      
-                      if (isOldMessage) {
-                        // Create a new branch/leaf
-                        const response = await fetch(
-                          `${API_URL}/v1/conversations/${currentConversation.id}/leaves`,
-                          {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                              branch_from_message_id: msg.id,
-                              name: `edit-${msg.id.slice(0, 8)}`
-                            })
-                          }
-                        );
-                        
-                        if (response.ok) {
-                          const newLeaf = await response.json();
-                          setActiveLeaf(newLeaf);
-                          
-                          // Reload leaves
-                          const leavesResponse = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/leaves`);
-                          const leavesData = await leavesResponse.json();
-                          setLeaves(leavesData.leaves || []);
-                          
-                          // Switch active leaf on backend
-                          await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/leaves/active`, {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ leaf_id: newLeaf.id })
-                          });
-                          
-                          // Reload messages for the new leaf
-                          const messagesResponse = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/messages?leaf_id=${newLeaf.id}`);
-                          const messagesData = await messagesResponse.json();
-                          setMessages(messagesData.data || []);
-                        }
-                      }
-                      
-                      setEditingMessageId(msg.id);
-                      setEditingText(msg.content);
-                      startEditing(msg.id);
-                    }}
+                    onLongPress={() => setShowMessageMenu(msg.id)}
                   >
                     <WikiText 
                       text={msg.content}
@@ -1491,5 +1447,80 @@ const styles = StyleSheet.create({
   aiToggleRow: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  messageMenu: {
+    position: 'absolute',
+    top: -5,
+    right: 10,
+    backgroundColor: 'white',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 5,
+    zIndex: 1000,
+  },
+  messageMenuButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  messageMenuText: {
+    fontSize: 14,
+    color: '#333',
+  },
+  branchControls: {
+    marginBottom: 8,
+  },
+  branchManagerButton: {
+    backgroundColor: '#f0f0f0',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  branchManagerButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+  },
+  branchList: {
+    backgroundColor: 'white',
+    borderRadius: 8,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    padding: 8,
+  },
+  branchItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 6,
+  },
+  branchName: {
+    flex: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  branchNameActive: {
+    backgroundColor: '#e3f2fd',
+  },
+  branchNameText: {
+    fontSize: 14,
+    color: '#333',
+  },
+  branchDelete: {
+    padding: 4,
+    marginLeft: 8,
+  },
+  branchDeleteText: {
+    fontSize: 16,
+    color: '#dc3545',
+    fontWeight: 'bold',
   },
 });
