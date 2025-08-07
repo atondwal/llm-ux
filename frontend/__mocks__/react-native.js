@@ -59,6 +59,14 @@ const StyleSheet = {
   flatten: (style) => style,
 };
 
+const Button = ({ title, onPress, testID, ...props }) =>
+  React.createElement('Button', { 
+    testID,
+    onPress,
+    props: { title },
+    ...props 
+  }, title);
+
 module.exports = {
   View,
   Text,
@@ -68,6 +76,7 @@ module.exports = {
   Switch,
   ScrollView,
   ActivityIndicator,
+  Button,
   StyleSheet,
   Platform: {
     OS: 'ios',

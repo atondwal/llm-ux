@@ -1,24 +1,45 @@
-import React from 'react';
-import { NavigationContainer } from '@react-navigation/native';
-import { createStackNavigator } from '@react-navigation/stack';
+import React, { useState } from 'react';
 import AppLive from './AppLive';
 import WikiPage from './src/screens/WikiPage';
 
-const Stack = createStackNavigator();
+type CurrentScreen = 'Chat' | 'WikiPage';
+
+interface NavigationState {
+  currentScreen: CurrentScreen;
+  wikiConcept?: string;
+}
 
 export default function App() {
-  return (
-    <NavigationContainer>
-      <Stack.Navigator initialRouteName="Chat" screenOptions={{ headerShown: false }}>
-        <Stack.Screen 
-          name="Chat" 
-          component={AppLive} 
-        />
-        <Stack.Screen 
-          name="WikiPage" 
-          component={WikiPage}
-        />
-      </Stack.Navigator>
-    </NavigationContainer>
-  );
+  const [navigationState, setNavigationState] = useState<NavigationState>({
+    currentScreen: 'Chat'
+  });
+
+  const navigate = (screen: CurrentScreen, params?: { concept?: string }) => {
+    setNavigationState({
+      currentScreen: screen,
+      wikiConcept: params?.concept || undefined
+    });
+  };
+
+  const goBack = () => {
+    setNavigationState({ currentScreen: 'Chat' });
+  };
+
+  // Simple navigation object to match React Navigation API
+  const navigation = {
+    navigate,
+    goBack,
+    push: (screen: string, params: any) => navigate(screen as CurrentScreen, params)
+  };
+
+  if (navigationState.currentScreen === 'WikiPage') {
+    return (
+      <WikiPage
+        navigation={navigation}
+        route={{ params: { concept: navigationState.wikiConcept } }}
+      />
+    );
+  }
+
+  return <AppLive navigation={navigation} />;
 }
