@@ -232,10 +232,13 @@ export default function App({ navigation }: { navigation?: any }) {
     const ytext = ydoc.getText('content');
     yTextRef.current = ytext;
 
-    // Connect to Yjs WebSocket endpoint for this specific message
+    // Use leaf-specific room name for Yjs
+    const roomName = activeLeaf ? `${activeLeaf.id}-${messageId}` : messageId;
+    
+    // Connect to Yjs WebSocket endpoint for this specific message and leaf
     const provider = new WebsocketProvider(
       `ws://localhost:8000/ws/collaborative`,
-      messageId, // Use messageId as room name
+      roomName, // Use leaf-specific room name
       ydoc
     );
 
@@ -341,6 +344,11 @@ export default function App({ navigation }: { navigation?: any }) {
         const activeLeafId = leavesData.active_leaf_id;
         const activeLeafObj = leavesData.leaves?.find((l: any) => l.id === activeLeafId);
         setActiveLeaf(activeLeafObj);
+        
+        // Reload all messages for the new leaf
+        const messagesResponse = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/messages?leaf_id=${activeLeafId}`);
+        const messagesData = await messagesResponse.json();
+        setMessages(messagesData.data || []);
       }
     } catch (error) {
       console.error('Failed to navigate version:', error);
@@ -547,6 +555,18 @@ export default function App({ navigation }: { navigation?: any }) {
                       const leavesResponse = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/leaves`);
                       const leavesData = await leavesResponse.json();
                       setLeaves(leavesData.leaves || []);
+                      
+                      // Switch active leaf on backend
+                      await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/leaves/active`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ leaf_id: newLeaf.id })
+                      });
+                      
+                      // Reload messages for the new leaf
+                      const messagesResponse = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/messages?leaf_id=${newLeaf.id}`);
+                      const messagesData = await messagesResponse.json();
+                      setMessages(messagesData.data || []);
                     }
                   }
                   
