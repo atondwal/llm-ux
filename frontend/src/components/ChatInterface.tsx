@@ -1,6 +1,6 @@
 /**
- * ChatInterface component - minimal implementation to pass tests.
- * Following extreme TDD - only implementing what tests require.
+ * ChatInterface component - collaborative editing interface like Etherpad.
+ * Following extreme TDD - implementing collaborative real-time editing.
  */
 import React, { useState, useCallback } from 'react';
 import {
@@ -11,8 +11,10 @@ import {
   TouchableOpacity,
   Switch,
   StyleSheet,
+  Modal,
 } from 'react-native';
 import { ChatInterfaceProps, Message } from '../types';
+import CollaborativeEditor from './CollaborativeEditor';
 
 const ChatInterface: React.FC<ChatInterfaceProps> = ({
   conversation,
@@ -25,6 +27,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
   const [aiProactive, setAiProactive] = useState(conversation.type === 'chat' ? false : true);
+  const [showCollaborativeView, setShowCollaborativeView] = useState(false);
 
   const handleSend = useCallback(() => {
     if (!inputText.trim()) return;
@@ -133,9 +136,52 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     );
   }, [currentUserId, editingMessageId, editText, editingSessions, handleEditMessage, handleSaveEdit, renderWikiTags]);
 
+  const toggleCollaborativeView = useCallback(() => {
+    setShowCollaborativeView(!showCollaborativeView);
+  }, [showCollaborativeView]);
+
+  if (showCollaborativeView) {
+    return (
+      <Modal
+        visible={true}
+        animationType="slide"
+        presentationStyle="fullScreen"
+      >
+        <View style={styles.fullScreenContainer}>
+          <View style={styles.collaborativeHeader}>
+            <Text style={styles.collaborativeTitle}>{conversation.title}</Text>
+            <TouchableOpacity
+              onPress={toggleCollaborativeView}
+              style={styles.closeButton}
+            >
+              <Text style={styles.closeButtonText}>✕</Text>
+            </TouchableOpacity>
+          </View>
+          <CollaborativeEditor
+            documentId={conversation.id}
+            userId={currentUserId}
+            userName={`User-${currentUserId.slice(0, 8)}`}
+            onContentChange={(content) => {
+              // Handle content changes
+              console.log('Content changed:', content);
+            }}
+          />
+        </View>
+      </Modal>
+    );
+  }
+
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>{conversation.title}</Text>
+      <View style={styles.headerContainer}>
+        <Text style={styles.title}>{conversation.title}</Text>
+        <TouchableOpacity
+          onPress={toggleCollaborativeView}
+          style={styles.collaborativeButton}
+        >
+          <Text style={styles.collaborativeButtonText}>📝 Collaborate</Text>
+        </TouchableOpacity>
+      </View>
       
       <View style={styles.aiToggleContainer}>
         <Text>AI Proactive Mode:</Text>
@@ -178,10 +224,57 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 16,
   },
+  fullScreenContainer: {
+    flex: 1,
+    backgroundColor: '#fff',
+  },
+  headerContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
   title: {
     fontSize: 18,
     fontWeight: 'bold',
-    marginBottom: 16,
+  },
+  collaborativeButton: {
+    backgroundColor: '#4ECDC4',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  collaborativeButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 14,
+  },
+  collaborativeHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+    backgroundColor: '#f8f9fa',
+  },
+  collaborativeTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  closeButton: {
+    backgroundColor: '#FF6B6B',
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  closeButtonText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
   },
   aiToggleContainer: {
     flexDirection: 'row',
