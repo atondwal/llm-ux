@@ -32,6 +32,11 @@ def create_app() -> FastAPI:
     # TODO: Add Redis for caching frequently accessed conversations
     conversations: Dict[str, Conversation] = {}
     
+    @app.get("/v1/conversations")
+    async def list_conversations() -> Dict[str, Any]:
+        """List all conversations."""
+        return {"data": list(conversations.values())}
+    
     @app.post("/v1/conversations", status_code=201)
     async def create_conversation(conversation: Conversation) -> Conversation:
         """Create a new conversation."""
