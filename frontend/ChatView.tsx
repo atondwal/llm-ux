@@ -17,6 +17,10 @@ export default function App({ navigation }: { navigation?: any }) {
   const [loading, setLoading] = useState(true);
   const [currentUserId, setCurrentUserId] = useState('user-1');
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  // Debug: Track editingMessageId changes
+  useEffect(() => {
+    console.log("🎯 editingMessageId changed to:", editingMessageId);
+  }, [editingMessageId]);
   const [editingText, setEditingText] = useState('');
   const [aiProactive, setAiProactive] = useState(false);
   const [lastClickTime, setLastClickTime] = useState<{[key: string]: number}>({});
@@ -206,13 +210,17 @@ export default function App({ navigation }: { navigation?: any }) {
   };
 
   const startEditing = (messageId: string) => {
+    console.log('🟢 startEditing called for messageId:', messageId);
     // Notify others via regular WebSocket
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      console.log('📤 Sending start_editing WebSocket message');
       wsRef.current.send(JSON.stringify({
         type: 'start_editing',
         messageId,
         userId: currentUserId
       }));
+    } else {
+      console.log('❌ WebSocket not connected, cannot send start_editing');
     }
 
     // Clean up previous Yjs connection if any
@@ -224,17 +232,21 @@ export default function App({ navigation }: { navigation?: any }) {
     }
 
     // Create new Yjs document for this message
+    console.log('📄 Creating new Yjs document');
     const ydoc = new Y.Doc();
     ydocRef.current = ydoc;
 
     // Create collaborative text
     const ytext = ydoc.getText('content');
     yTextRef.current = ytext;
+    console.log('📝 Created Yjs text object');
 
     // Use leaf-specific room name for Yjs
     const roomName = activeLeaf ? `${activeLeaf.id}-${messageId}` : messageId;
     
     // Connect to Yjs WebSocket endpoint for this specific message and leaf
+    console.log('🔌 Connecting to Yjs WebSocket, roomName:', roomName);
+    console.log("🏠 Full WebSocket URL:", `ws://localhost:8000/ws/collaborative/${roomName}`);
     const provider = new WebsocketProvider(
       `ws://localhost:8000/ws/collaborative`,
       roomName, // Use leaf-specific room name
@@ -242,28 +254,46 @@ export default function App({ navigation }: { navigation?: any }) {
     );
 
     provider.on('status', (event: any) => {
-      console.log('Yjs connection status:', event.status);
+      console.log('🔗 Yjs connection status:', event.status);
+    });
+
+    provider.on('connection-error', (error: any) => {
+      console.error('🚨 Yjs connection error:', error);
+    });
+
+    provider.on('connection-close', (event: any) => {
+      console.warn('🔒 Yjs connection closed:', event);
     });
 
     // Wait for initial sync before setting content
     provider.on('synced', (synced: boolean) => {
+      console.log('🔄 Yjs synced:', synced);
       if (synced) {
         // Only set initial content if the document is empty (first editor)
         if (ytext.length === 0) {
           const message = messages.find(m => m.id === messageId);
           if (message) {
+            console.log('📝 Setting initial Yjs content:', message.content.substring(0, 50) + '...');
             ytext.insert(0, message.content);
           }
+        } else {
+          console.log('📝 Yjs document already has content, length:', ytext.length);
         }
         // Set the current text from the synced document
-        setEditingText(ytext.toString());
+        const yjsContent = ytext.toString();
+        console.log('📝 Setting editingText from Yjs:', yjsContent.substring(0, 50) + '...');
+        setEditingText(yjsContent);
       }
     });
 
     // Observe text changes from other users
     ytext.observe(() => {
+      console.log('👁️ Yjs text changed, messageId check:', editingMessageIdRef.current === messageId);
+        console.log("📋 Current editingMessageId:", editingMessageIdRef.current, "Expected:", messageId);
       if (editingMessageIdRef.current === messageId) {
-        setEditingText(ytext.toString());
+        const newText = ytext.toString();
+        console.log('📝 Updating editingText from Yjs observer:', newText.substring(0, 50) + '...');
+        setEditingText(newText);
       }
     });
 
@@ -355,59 +385,39 @@ export default function App({ navigation }: { navigation?: any }) {
   };
 
   const handleEditingTextChange = (text: string) => {
+    console.log('⌨️ handleEditingTextChange called, text length:', text.length, 'first 50 chars:', text.substring(0, 50) + '...');
     setEditingText(text);
     
     // Update Yjs document
     if (yTextRef.current && editingMessageId) {
+      console.log('📝 Updating Yjs document');
       // Replace entire content (simple approach)
       // For production, you'd want to calculate minimal diffs
       const currentContent = yTextRef.current.toString();
       if (currentContent !== text) {
+        console.log('🔄 Yjs content differs, updating. Current:', currentContent.substring(0, 30), 'New:', text.substring(0, 30));
+        console.log("🚀 Yjs transaction: deleting", yTextRef.current.length, "chars, inserting", text.length, "chars");
         ydocRef.current?.transact(() => {
           yTextRef.current?.delete(0, yTextRef.current.length);
           yTextRef.current?.insert(0, text);
         });
+      } else {
+        console.log('✅ Yjs content same as input, no update needed');
       }
+    } else {
+      console.log('❌ No yTextRef or editingMessageId:', !!yTextRef.current, editingMessageId);
     }
   };
 
-  // Save current edit
-  const saveEdit = async () => {
-    if (editingMessageId && currentConversation) {
-      try {
-        const response = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/messages/${editingMessageId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            content: editingText,
-            leaf_id: activeLeaf?.id
-          })
-        });
-        
-        if (response.ok) {
-          setMessages(prev => prev.map(m => 
-            m.id === editingMessageId 
-              ? { ...m, content: editingText }
-              : m
-          ));
-          
-          loadMessageVersions(editingMessageId);
-          stopEditing(editingMessageId);
-          setEditingMessageId(null);
-          setEditingText('');
-        }
-      } catch (error) {
-        console.error('Error updating message:', error);
-      }
-    }
-  };
 
   // Save current edit with Yjs integration
-  const saveEditWithYjs = async () => {
+  const saveEdit = async () => {
+    console.log('💾 saveEdit called, editingMessageId:', editingMessageId);
     if (editingMessageId && currentConversation) {
       try {
         // Get final content from Yjs document
         const finalContent = yTextRef.current ? yTextRef.current.toString() : editingText;
+        console.log('📝 Final content for save (Yjs):', yTextRef.current ? 'FROM_YJS' : 'FROM_STATE', finalContent.substring(0, 50) + '...');
         
         const response = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/messages/${editingMessageId}`, {
           method: 'PUT',
@@ -462,14 +472,18 @@ export default function App({ navigation }: { navigation?: any }) {
     const lastClick = lastClickTime[messageId] || 0;
     const timeDiff = now - lastClick;
     
+    console.log('👆 Double-click detected, messageId:', messageId, 'timeDiff:', timeDiff);
     setLastClickTime(prev => ({ ...prev, [messageId]: now }));
     
     // If clicked within 500ms, it's a double click
     if (timeDiff < 500 && timeDiff > 50) {
+      console.log('✅ Valid double-click, starting edit for:', messageId);
       // Start editing
       setEditingMessageId(messageId);
       setEditingText(messageContent);
       startEditing(messageId);
+    } else {
+      console.log('❌ Not a valid double-click, timeDiff:', timeDiff);
     }
   };
 
@@ -588,12 +602,13 @@ export default function App({ navigation }: { navigation?: any }) {
                       style={styles.floatingEditInput}
                       value={editingText}
                       onChangeText={handleEditingTextChange}
+                      // onBlur={saveEdit} // Temporarily disabled
                       onKeyPress={(e) => {
                         if (e.nativeEvent.key === 'Escape') {
                           cancelEdit();
                         } else if (e.nativeEvent.key === 'Enter' && !e.nativeEvent.shiftKey) {
                           e.preventDefault();
-                          saveEditWithYjs();
+                          saveEdit();
                         }
                       }}
                       multiline
@@ -690,12 +705,13 @@ export default function App({ navigation }: { navigation?: any }) {
                         style={styles.inlineEditInput}
                         value={editingText}
                         onChangeText={handleEditingTextChange}
+                        // onBlur={saveEdit} // Temporarily disabled
                         onKeyPress={(e) => {
                           if (e.nativeEvent.key === 'Escape') {
                             cancelEdit();
                           } else if (e.nativeEvent.key === 'Enter' && !e.nativeEvent.shiftKey) {
                             e.preventDefault();
-                            saveEditWithYjs();
+                            saveEdit();
                           }
                         }}
                         multiline
