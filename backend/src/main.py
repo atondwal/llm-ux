@@ -29,7 +29,9 @@ from .websocket_models import (
     WSEditingStart,
     WSEditingStarted,
     WSEditingStop,
-    WSEditingStopped
+    WSEditingStopped,
+    WSTextDelta,
+    WSCursorMove
 )
 
 
@@ -318,6 +320,26 @@ def create_app() -> FastAPI:
                     # Broadcast to all clients
                     stopped_msg = WSEditingStopped(messageId=edit_stop.messageId, userId=edit_stop.userId)
                     await manager.send_to_all(stopped_msg.model_dump_json(), conversation_id)
+                
+                elif message_dict.get("type") == "text_delta":
+                    # Real-time text synchronization - just broadcast to others
+                    try:
+                        text_delta = WSTextDelta(**message_dict)
+                        # Broadcast text changes to all other clients (exclude sender)
+                        await manager.broadcast(text_delta.model_dump_json(), conversation_id, exclude=websocket)
+                    except Exception:
+                        error_msg = WSErrorMessage(message="Invalid text delta format")
+                        await websocket.send_text(error_msg.model_dump_json())
+                
+                elif message_dict.get("type") == "cursor_move":
+                    # Cursor position updates - just broadcast to others
+                    try:
+                        cursor_move = WSCursorMove(**message_dict)
+                        # Broadcast cursor position to all other clients (exclude sender)
+                        await manager.broadcast(cursor_move.model_dump_json(), conversation_id, exclude=websocket)
+                    except Exception:
+                        error_msg = WSErrorMessage(message="Invalid cursor move format")
+                        await websocket.send_text(error_msg.model_dump_json())
                 
                 else:
                     # Unknown message type

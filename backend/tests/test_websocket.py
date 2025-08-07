@@ -275,3 +275,108 @@ class TestWebSocketMessageValidation:
             error_data = websocket.receive_json()
             assert error_data["type"] == "error"
             assert "author" in error_data["message"].lower() or "participant" in error_data["message"].lower()
+
+
+class TestWebSocketCollaborativeEditing:
+    """Test real-time collaborative editing features."""
+    
+    def test_websocket_text_delta_broadcast(self, client, test_conversation):
+        """Should broadcast text deltas to other connected clients."""
+        conversation_id = test_conversation["id"]
+        
+        # Connect two WebSocket clients
+        with client.websocket_connect(f"/v1/conversations/{conversation_id}/ws") as ws1:
+            with client.websocket_connect(f"/v1/conversations/{conversation_id}/ws") as ws2:
+                # Skip connection messages
+                ws1.receive_json()
+                ws2.receive_json()
+                
+                # ws1 gets presence update when ws2 joins
+                ws1.receive_json()
+                
+                # Send text delta from ws1
+                text_delta = {
+                    "type": "text_delta",
+                    "messageId": str(uuid.uuid4()),
+                    "userId": "user-1", 
+                    "text": "Hello world",
+                    "cursorPosition": 11
+                }
+                ws1.send_json(text_delta)
+                
+                # ws2 should receive the text delta (ws1 should not receive it back)
+                ws2_data = ws2.receive_json()
+                assert ws2_data["type"] == "text_delta"
+                assert ws2_data["messageId"] == text_delta["messageId"]
+                assert ws2_data["text"] == "Hello world"
+                assert ws2_data["cursorPosition"] == 11
+    
+    def test_websocket_cursor_move_broadcast(self, client, test_conversation):
+        """Should broadcast cursor movements to other connected clients.""" 
+        conversation_id = test_conversation["id"]
+        
+        # Connect two WebSocket clients
+        with client.websocket_connect(f"/v1/conversations/{conversation_id}/ws") as ws1:
+            with client.websocket_connect(f"/v1/conversations/{conversation_id}/ws") as ws2:
+                # Skip connection messages
+                ws1.receive_json()
+                ws2.receive_json()
+                
+                # ws1 gets presence update when ws2 joins
+                ws1.receive_json()
+                
+                # Send cursor move from ws1
+                cursor_move = {
+                    "type": "cursor_move",
+                    "messageId": str(uuid.uuid4()),
+                    "userId": "user-1",
+                    "cursorPosition": 5
+                }
+                ws1.send_json(cursor_move)
+                
+                # ws2 should receive the cursor move (ws1 should not receive it back)
+                ws2_data = ws2.receive_json()
+                assert ws2_data["type"] == "cursor_move"
+                assert ws2_data["messageId"] == cursor_move["messageId"]
+                assert ws2_data["userId"] == "user-1"
+                assert ws2_data["cursorPosition"] == 5
+
+    def test_websocket_invalid_text_delta(self, client, test_conversation):
+        """Should handle invalid text delta messages."""
+        conversation_id = test_conversation["id"]
+        
+        with client.websocket_connect(f"/v1/conversations/{conversation_id}/ws") as websocket:
+            # Skip connection message
+            websocket.receive_json()
+            
+            # Send invalid text delta (missing required fields)
+            websocket.send_json({
+                "type": "text_delta",
+                "messageId": "missing-fields"
+                # Missing userId, text, cursorPosition
+            })
+            
+            # Should receive error
+            error_data = websocket.receive_json()
+            assert error_data["type"] == "error"
+            assert "invalid text delta" in error_data["message"].lower()
+    
+    def test_websocket_invalid_cursor_move(self, client, test_conversation):
+        """Should handle invalid cursor move messages."""
+        conversation_id = test_conversation["id"]
+        
+        with client.websocket_connect(f"/v1/conversations/{conversation_id}/ws") as websocket:
+            # Skip connection message
+            websocket.receive_json()
+            
+            # Send invalid cursor move (missing required fields)
+            websocket.send_json({
+                "type": "cursor_move",
+                "messageId": "missing-fields"
+                # Missing userId, cursorPosition
+            })
+            
+            # Should receive error
+            error_data = websocket.receive_json()
+            assert error_data["type"] == "error"
+            assert "invalid cursor move" in error_data["message"].lower()
