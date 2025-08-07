@@ -247,8 +247,28 @@ describe('MessageBubble', () => {
 3. Commit tests: `test: add tests for message editing`
 4. Implement feature to pass tests
 5. Commit implementation: `feat: implement message editing`
-6. Refactor if needed: `refactor: simplify message editing logic`
-7. All commits must pass CI/CD checks
+6. **Self-Review**: After committing, review your own code:
+   - Re-read the diff critically
+   - Check for edge cases missed by tests
+   - Verify type safety and documentation
+   - Consider performance implications
+   - Think: "Would I approve this PR?"
+7. Refactor if needed based on self-review: `refactor: simplify message editing logic`
+8. All commits must pass CI/CD checks
+
+### Self-Review Checklist (After Each Commit)
+```
+- [ ] Does this code do what the tests expect?
+- [ ] Are there any untested edge cases?
+- [ ] Is the code readable without comments?
+- [ ] Are all types explicit and correct?
+- [ ] Would a new developer understand this?
+- [ ] Are there any security concerns?
+- [ ] Is there any duplicated logic?
+- [ ] Could this be simpler?
+- [ ] Are error messages helpful?
+- [ ] Is the git commit message clear?
+```
 
 ### Pre-commit Hooks
 ```yaml
