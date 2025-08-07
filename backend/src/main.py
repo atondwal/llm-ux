@@ -663,6 +663,52 @@ def create_app() -> FastAPI:
                 presence_msg = WSPresenceUpdate(action="left", activeUsers=user_count)
                 await manager.send_to_all(presence_msg.model_dump_json(), conversation_id)
     
+    # Yjs collaborative editing rooms
+    yjs_rooms: Dict[str, List[WebSocket]] = {}  # room_name -> list of websockets
+    
+    @app.websocket("/ws/collaborative/{room_name}")
+    async def yjs_collaborative_endpoint(websocket: WebSocket, room_name: str) -> None:
+        """WebSocket endpoint for Yjs collaborative editing."""
+        await websocket.accept()
+        
+        # Add to room
+        if room_name not in yjs_rooms:
+            yjs_rooms[room_name] = []
+        yjs_rooms[room_name].append(websocket)
+        
+        print(f"🔌 Client joined Yjs room: {room_name} (total: {len(yjs_rooms[room_name])})")
+        
+        try:
+            while True:
+                # Receive Yjs message from client
+                message = await websocket.receive_bytes()
+                
+                # Broadcast to all other clients in the same room
+                if room_name in yjs_rooms:
+                    disconnected_clients = []
+                    for client in yjs_rooms[room_name]:
+                        if client != websocket:  # Don't send back to sender
+                            try:
+                                await client.send_bytes(message)
+                            except Exception as e:
+                                print(f"❌ Failed to send to client: {e}")
+                                disconnected_clients.append(client)
+                    
+                    # Remove disconnected clients
+                    for client in disconnected_clients:
+                        yjs_rooms[room_name].remove(client)
+                        
+        except WebSocketDisconnect:
+            # Remove from room
+            if room_name in yjs_rooms:
+                try:
+                    yjs_rooms[room_name].remove(websocket)
+                    print(f"🔌 Client left Yjs room: {room_name} (total: {len(yjs_rooms[room_name])})")
+                    if not yjs_rooms[room_name]:
+                        del yjs_rooms[room_name]
+                except ValueError:
+                    pass
+    
     return app
 
 
