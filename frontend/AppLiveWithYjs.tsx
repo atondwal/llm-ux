@@ -202,12 +202,6 @@ export default function App({ navigation }: { navigation?: any }) {
     const ytext = ydoc.getText('content');
     yTextRef.current = ytext;
 
-    // Set initial content
-    const message = messages.find(m => m.id === messageId);
-    if (message) {
-      ytext.insert(0, message.content);
-    }
-
     // Connect to Yjs WebSocket endpoint for this specific message
     const provider = new WebsocketProvider(
       `ws://localhost:8000/ws/collaborative`,
@@ -217,6 +211,21 @@ export default function App({ navigation }: { navigation?: any }) {
 
     provider.on('status', (event: any) => {
       console.log('Yjs connection status:', event.status);
+    });
+
+    // Wait for initial sync before setting content
+    provider.on('synced', (synced: boolean) => {
+      if (synced) {
+        // Only set initial content if the document is empty (first editor)
+        if (ytext.length === 0) {
+          const message = messages.find(m => m.id === messageId);
+          if (message) {
+            ytext.insert(0, message.content);
+          }
+        }
+        // Set the current text from the synced document
+        setEditingText(ytext.toString());
+      }
     });
 
     // Observe text changes from other users
