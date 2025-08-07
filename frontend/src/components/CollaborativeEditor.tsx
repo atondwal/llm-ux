@@ -24,6 +24,7 @@ interface CollaborativeEditorProps {
   documentId: string;
   userId: string;
   userName: string;
+  initialContent?: string;
   onContentChange?: (content: string) => void;
 }
 
@@ -36,6 +37,7 @@ const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   documentId,
   userId,
   userName,
+  initialContent = '',
   onContentChange,
 }) => {
   const [text, setText] = useState('');
@@ -53,7 +55,7 @@ const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   useEffect(() => {
     const ydoc = new Y.Doc();
     const provider = new WebsocketProvider(
-      `ws://localhost:8000/ws/collaborative/${documentId}`,
+      'ws://localhost:8000/ws/collaborative',
       documentId,
       ydoc
     );
@@ -75,8 +77,13 @@ const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
       onContentChange?.(newText);
     });
 
-    // Set initial text
-    setText(ytext.toString());
+    // Wait for initial sync, then set content if empty
+    provider.on('synced', (synced: boolean) => {
+      if (synced && ytext.length === 0 && initialContent) {
+        ytext.insert(0, initialContent);
+      }
+      setText(ytext.toString());
+    });
 
     // Awareness for cursors
     const awareness = provider.awareness;
@@ -111,7 +118,7 @@ const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
       provider.destroy();
       ydoc.destroy();
     };
-  }, [documentId, userName, onContentChange]);
+  }, [documentId, userName, initialContent, onContentChange]);
 
   // Update cursor position when selection changes
   const updateCursor = useCallback((position: number, selection?: { start: number; end: number }) => {

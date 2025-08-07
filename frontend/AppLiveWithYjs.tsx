@@ -311,6 +311,7 @@ export default function App({ navigation }: { navigation?: any }) {
             documentId={currentConversation.id}
             userId={currentUserId}
             userName={`User-${currentUserId}`}
+            initialContent={messages.map(m => `${m.author_id}: ${m.content}`).join('\n\n')}
             onContentChange={(content) => {
               console.log('Document content changed:', content);
             }}
