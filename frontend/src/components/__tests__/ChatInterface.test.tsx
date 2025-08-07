@@ -150,6 +150,93 @@ describe('ChatInterface', () => {
       expect(tagElement.props.children).toContain('machine-learning');
     });
 
+    it('should handle wiki tag at start of message', () => {
+      const messageWithTag: Conversation = {
+        ...mockConversation,
+        messages: [
+          {
+            id: 'msg-1',
+            conversationId: 'conv-123',
+            authorId: 'user-1',
+            content: '[[react]] is a library',
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      };
+
+      const { getByTestId } = render(
+        <ChatInterface conversation={messageWithTag} currentUserId="user-1" />
+      );
+
+      const tagElement = getByTestId('wiki-tag-react');
+      expect(tagElement).toBeTruthy();
+    });
+
+    it('should handle empty message content with wiki tag check', () => {
+      const messageWithEmpty: Conversation = {
+        ...mockConversation,
+        messages: [
+          {
+            id: 'msg-1',
+            conversationId: 'conv-123',
+            authorId: 'user-1',
+            content: '[[',  // Incomplete tag that won't match regex
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      };
+
+      const { getByText } = render(
+        <ChatInterface conversation={messageWithEmpty} currentUserId="user-1" />
+      );
+
+      // Should render the incomplete tag as plain text
+      expect(getByText('[[')).toBeTruthy();
+    });
+
+    it('should handle message with incomplete wiki tag brackets', () => {
+      const messageWithIncomplete: Conversation = {
+        ...mockConversation,
+        messages: [
+          {
+            id: 'msg-1',
+            conversationId: 'conv-123',
+            authorId: 'user-1',
+            content: '[[incomplete tag without closing',
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      };
+
+      const { getByText } = render(
+        <ChatInterface conversation={messageWithIncomplete} currentUserId="user-1" />
+      );
+
+      // Should render the text as-is when tag is incomplete
+      expect(getByText('[[incomplete tag without closing')).toBeTruthy();
+    });
+
+    it('should handle message with no wiki tags', () => {
+      const messageWithoutTag: Conversation = {
+        ...mockConversation,
+        messages: [
+          {
+            id: 'msg-1',
+            conversationId: 'conv-123',
+            authorId: 'user-1',
+            content: 'This message has no wiki tags',
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      };
+
+      const { getByText } = render(
+        <ChatInterface conversation={messageWithoutTag} currentUserId="user-1" />
+      );
+
+      expect(getByText('This message has no wiki tags')).toBeTruthy();
+    });
+
     it('should handle clicking on wiki tags', () => {
       const onTagClick = jest.fn();
       const messageWithTag: Conversation = {
@@ -209,13 +296,70 @@ describe('ChatInterface', () => {
       fireEvent.changeText(editInput, 'Edited message');
       fireEvent(editInput, 'onSubmitEditing');
 
-      expect(getByTestId('message-msg-1').props.children).toContain('Edited message');
+      // After editing, the message should show the new text
+      const messageElement = getByTestId('message-msg-1');
+      const textElement = messageElement.props.children[1]; // Skip the editing cursor check
+      expect(textElement.props.children).toBe('Edited message');
+    });
+
+    it('should only edit the selected message when multiple messages exist', () => {
+      const conversationWithMessages: Conversation = {
+        ...mockConversation,
+        messages: [
+          {
+            id: 'msg-1',
+            conversationId: 'conv-123',
+            authorId: 'user-1',
+            content: 'First message',
+            createdAt: new Date().toISOString(),
+          },
+          {
+            id: 'msg-2',
+            conversationId: 'conv-123',
+            authorId: 'user-1',
+            content: 'Second message',
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      };
+
+      const { getByTestId, getByDisplayValue, getByText } = render(
+        <ChatInterface conversation={conversationWithMessages} currentUserId="user-1" />
+      );
+
+      // Edit first message
+      const message1 = getByTestId('message-msg-1');
+      fireEvent(message1, 'onLongPress');
+
+      const editInput = getByDisplayValue('First message');
+      fireEvent.changeText(editInput, 'Edited first');
+      fireEvent(editInput, 'onSubmitEditing');
+
+      // Verify first message is edited
+      const editedMessage1 = getByTestId('message-msg-1');
+      expect(editedMessage1.props.children[1].props.children).toBe('Edited first');
+      
+      // Verify second message is unchanged
+      expect(getByText('Second message')).toBeTruthy();
     });
 
     it('should show live cursors when others are editing', () => {
+      const conversationWithMessage: Conversation = {
+        ...mockConversation,
+        messages: [
+          {
+            id: 'msg-1',
+            conversationId: 'conv-123',
+            authorId: 'user-1',
+            content: 'Test message',
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      };
+
       const { getByTestId } = render(
         <ChatInterface 
-          conversation={mockConversation} 
+          conversation={conversationWithMessage} 
           currentUserId="user-1"
           editingSessions={[
             { messageId: 'msg-1', userId: 'user-2', userName: 'Bob' }
@@ -225,7 +369,9 @@ describe('ChatInterface', () => {
 
       const cursor = getByTestId('editing-cursor-user-2');
       expect(cursor).toBeTruthy();
-      expect(cursor.props.children).toContain('Bob');
+      // Check that the username is displayed in the editing cursor
+      const textElement = cursor.props.children;
+      expect(textElement.props.children).toBe('Bob');
     });
   });
 
@@ -238,6 +384,20 @@ describe('ChatInterface', () => {
       const aiToggle = getByTestId('ai-proactive-toggle');
       expect(aiToggle).toBeTruthy();
       expect(aiToggle.props.value).toBe(false); // Default off for human chats
+    });
+
+    it('should default AI proactive mode to true for non-chat conversations', () => {
+      const wikiConversation: Conversation = {
+        ...mockConversation,
+        type: 'wiki',
+      };
+
+      const { getByTestId } = render(
+        <ChatInterface conversation={wikiConversation} currentUserId="user-1" />
+      );
+
+      const toggle = getByTestId('ai-proactive-toggle');
+      expect(toggle.props.value).toBe(true); // wiki mode defaults to true
     });
 
     it('should allow tagging AI for help', () => {

@@ -70,7 +70,7 @@ export const ConversationSchema = z.object({
   participants: z.array(ParticipantSchema),
   messages: z.array(MessageSchema),
   createdAt: z.string().datetime(),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.string(), z.any()).optional(),
 });
 
 // Type guards

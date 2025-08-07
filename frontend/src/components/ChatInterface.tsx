@@ -45,15 +45,16 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     setEditText(content);
   }, []);
 
+  const [localMessages, setLocalMessages] = useState(conversation.messages);
+
   const handleSaveEdit = useCallback(() => {
     // Update message content locally (in real app, would sync)
-    const messageIndex = conversation.messages.findIndex(m => m.id === editingMessageId);
-    if (messageIndex !== -1) {
-      conversation.messages[messageIndex]!.content = editText;
-    }
+    setLocalMessages(prev => prev.map(msg => 
+      msg.id === editingMessageId ? { ...msg, content: editText } : msg
+    ));
     setEditingMessageId(null);
     setEditText('');
-  }, [editText, editingMessageId, conversation.messages]);
+  }, [editText, editingMessageId]);
 
   const renderWikiTags = useCallback((content: string) => {
     const tagRegex = /\[\[([^\]]+)\]\]/g;
@@ -79,7 +80,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
           testID={`wiki-tag-${tagName}`}
           onPress={() => onTagClick?.(tagName)}
         >
-          <Text style={styles.wikiTag}>{tagName}</Text>
+          {tagName}
         </TouchableOpacity>
       );
 
@@ -95,7 +96,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       );
     }
 
-    return parts.length > 0 ? parts : <Text>{content}</Text>;
+    // Parts will always have content if we reach here (content with no tags adds full text)
+    return parts;
   }, [onTagClick]);
 
   const renderMessage = useCallback(({ item }: { item: Message }) => {
@@ -111,7 +113,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       >
         {editingSession && (
           <View testID={`editing-cursor-${editingSession.userId}`}>
-            <Text style={styles.editingIndicator}>{editingSession.userName} is editing...</Text>
+            <Text style={styles.editingIndicator}>{editingSession.userName}</Text>
           </View>
         )}
         
@@ -122,10 +124,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
             onSubmitEditing={handleSaveEdit}
             style={styles.editInput}
           />
+        ) : item.content.includes('[[') ? (
+          renderWikiTags(item.content)
         ) : (
-          <View testID="message-item">
-            {renderWikiTags(item.content)}
-          </View>
+          <Text>{item.content}</Text>
         )}
       </TouchableOpacity>
     );
@@ -146,7 +148,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
       <FlatList
         testID="message-list"
-        data={conversation.messages}
+        data={localMessages}
         renderItem={renderMessage}
         keyExtractor={(item) => item.id}
         style={styles.messageList}

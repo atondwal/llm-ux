@@ -29,7 +29,10 @@ const FlatList = ({ data, renderItem, keyExtractor, testID, ...props }) => {
     return React.createElement('FlatList', { testID, ...props }, null);
   }
   return React.createElement('FlatList', { testID, ...props }, 
-    data.map((item, index) => renderItem({ item, index }))
+    data.map((item, index) => {
+      const key = keyExtractor ? keyExtractor(item, index) : index.toString();
+      return React.createElement(React.Fragment, { key }, renderItem({ item, index }));
+    })
   );
 };
 
