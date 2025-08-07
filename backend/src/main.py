@@ -231,7 +231,7 @@ def create_app() -> FastAPI:
             # Return original messages
             messages_list = [msg.model_dump() for msg in conversation.messages]
         
-        return {"messages": messages_list}
+        return {"data": messages_list}
     
     @app.post("/v1/conversations/{conversation_id}/messages", status_code=201)
     async def add_message(conversation_id: str, message_data: Dict[str, Any], background_tasks: BackgroundTasks) -> Dict[str, Any]:

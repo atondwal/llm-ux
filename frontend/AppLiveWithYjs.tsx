@@ -102,13 +102,13 @@ export default function App({ navigation }: { navigation?: any }) {
     
     // Load messages
     try {
-      const response = await fetch(`${API_URL}/v1/conversations/${conv.id}`);
+      const response = await fetch(`${API_URL}/v1/conversations/${conv.id}/messages`);
       const data = await response.json();
-      setMessages(data.messages || []);
+      setMessages(data.data || []);
       
       // Load versions for each message
-      if (data.messages) {
-        for (const msg of data.messages) {
+      if (data.data) {
+        for (const msg of data.data) {
           loadMessageVersions(msg.id);
         }
       }
@@ -297,6 +297,7 @@ export default function App({ navigation }: { navigation?: any }) {
     try {
       const response = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/messages/${messageId}/versions`);
       const data = await response.json();
+      console.log(`Versions for message ${messageId}:`, data);
       setMessageVersions(prev => ({
         ...prev,
         [messageId]: data.versions || []
@@ -470,7 +471,8 @@ export default function App({ navigation }: { navigation?: any }) {
           const showAuthor = index === 0 || messages[index - 1].author_id !== msg.author_id;
           const versions = messageVersions[msg.id] || [];
           const hasVersions = versions.length > 1;
-          const currentVersionIndex = versions.findIndex((v: any) => v.leaf_id === activeLeaf?.id) || 0;
+          let currentVersionIndex = versions.findIndex((v: any) => v.leaf_id === activeLeaf?.id);
+          if (currentVersionIndex === -1) currentVersionIndex = 0;
           
           return (
             <View key={msg.id} style={[
@@ -638,6 +640,16 @@ export default function App({ navigation }: { navigation?: any }) {
                       });
                       
                       if (response.ok) {
+                        // Update the message locally
+                        setMessages(prev => prev.map(msg => 
+                          msg.id === editingMessageId 
+                            ? { ...msg, content: editingText }
+                            : msg
+                        ));
+                        
+                        // Reload versions for this message
+                        loadMessageVersions(editingMessageId);
+                        
                         stopEditing(editingMessageId);
                         setEditingMessageId(null);
                         setEditingText('');
