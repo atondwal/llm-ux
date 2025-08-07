@@ -1,5 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, View, Text, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, Modal } from 'react-native';
+import { StyleSheet, View, Text, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, Modal, Platform } from 'react-native';
 import { useState, useEffect, useRef } from 'react';
 import WikiText from './src/components/WikiText';
 import * as Y from 'yjs';
@@ -235,17 +235,14 @@ export default function App({ navigation }: { navigation?: any }) {
   };
 
   const startEditing = (messageId: string) => {
-    console.log('🟢 startEditing called for messageId:', messageId);
     // Notify others via regular WebSocket
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      console.log('📤 Sending start_editing WebSocket message');
       wsRef.current.send(JSON.stringify({
         type: 'start_editing',
         messageId,
         userId: currentUserId
       }));
     } else {
-      console.log('❌ WebSocket not connected, cannot send start_editing');
     }
 
     // Clean up previous Yjs connection if any
@@ -257,21 +254,17 @@ export default function App({ navigation }: { navigation?: any }) {
     }
 
     // Create new Yjs document for this message
-    console.log('📄 Creating new Yjs document');
     const ydoc = new Y.Doc();
     ydocRef.current = ydoc;
 
     // Create collaborative text
     const ytext = ydoc.getText('content');
     yTextRef.current = ytext;
-    console.log('📝 Created Yjs text object');
 
     // Use leaf-specific room name for Yjs
     const roomName = activeLeaf ? `${activeLeaf.id}-${messageId}` : messageId;
     
     // Connect to Yjs WebSocket endpoint for this specific message and leaf
-    console.log('🔌 Connecting to Yjs WebSocket, roomName:', roomName);
-    console.log("🏠 Full WebSocket URL:", `ws://localhost:8000/ws/collaborative/${roomName}`);
     const provider = new WebsocketProvider(
       `ws://localhost:8000/ws/collaborative`,
       roomName, // Use leaf-specific room name
@@ -279,7 +272,6 @@ export default function App({ navigation }: { navigation?: any }) {
     );
 
     provider.on('status', (event: any) => {
-      console.log('🔗 Yjs connection status:', event.status);
     });
 
     provider.on('connection-error', (error: any) => {
@@ -292,32 +284,26 @@ export default function App({ navigation }: { navigation?: any }) {
 
     // Wait for initial sync before setting content
     provider.on('synced', (synced: boolean) => {
-      console.log('🔄 Yjs synced:', synced);
       if (synced) {
         // Only set initial content if the document is empty (first editor)
         if (ytext.length === 0) {
           const message = messages.find(m => m.id === messageId);
           if (message) {
-            console.log('📝 Setting initial Yjs content:', message.content.substring(0, 50) + '...');
             ytext.insert(0, message.content);
           }
         } else {
-          console.log('📝 Yjs document already has content, length:', ytext.length);
         }
         // Set the current text from the synced document
         const yjsContent = ytext.toString();
-        console.log('📝 Setting editingText from Yjs:', yjsContent.substring(0, 50) + '...');
         setEditingText(yjsContent);
       }
     });
 
     // Observe text changes from other users
-    ytext.observe(() => {
-      console.log('👁️ Yjs text changed, messageId check:', editingMessageIdRef.current === messageId);
-        console.log("📋 Current editingMessageId:", editingMessageIdRef.current, "Expected:", messageId);
-      if (editingMessageIdRef.current === messageId) {
+    ytext.observe((event) => {
+      // Only update if this is a remote change (not from our local edits)
+      if (editingMessageIdRef.current === messageId && event.transaction.origin !== 'local') {
         const newText = ytext.toString();
-        console.log('📝 Updating editingText from Yjs observer:', newText.substring(0, 50) + '...');
         setEditingText(newText);
       }
     });
@@ -410,39 +396,28 @@ export default function App({ navigation }: { navigation?: any }) {
   };
 
   const handleEditingTextChange = (text: string) => {
-    console.log('⌨️ handleEditingTextChange called, text length:', text.length, 'first 50 chars:', text.substring(0, 50) + '...');
     setEditingText(text);
     
     // Update Yjs document
     if (yTextRef.current && editingMessageId) {
-      console.log('📝 Updating Yjs document');
-      // Replace entire content (simple approach)
-      // For production, you'd want to calculate minimal diffs
       const currentContent = yTextRef.current.toString();
       if (currentContent !== text) {
-        console.log('🔄 Yjs content differs, updating. Current:', currentContent.substring(0, 30), 'New:', text.substring(0, 30));
-        console.log("🚀 Yjs transaction: deleting", yTextRef.current.length, "chars, inserting", text.length, "chars");
+        // Use a flag to prevent feedback loop
         ydocRef.current?.transact(() => {
           yTextRef.current?.delete(0, yTextRef.current.length);
           yTextRef.current?.insert(0, text);
-        });
-      } else {
-        console.log('✅ Yjs content same as input, no update needed');
+        }, 'local'); // Mark as local change
       }
-    } else {
-      console.log('❌ No yTextRef or editingMessageId:', !!yTextRef.current, editingMessageId);
     }
   };
 
 
   // Save current edit with Yjs integration
   const saveEdit = async () => {
-    console.log('💾 saveEdit called, editingMessageId:', editingMessageId);
     if (editingMessageId && currentConversation) {
       try {
         // Get final content from Yjs document
         const finalContent = yTextRef.current ? yTextRef.current.toString() : editingText;
-        console.log('📝 Final content for save (Yjs):', yTextRef.current ? 'FROM_YJS' : 'FROM_STATE', finalContent.substring(0, 50) + '...');
         
         const response = await fetch(`${API_URL}/v1/conversations/${currentConversation.id}/messages/${editingMessageId}`, {
           method: 'PUT',
@@ -668,18 +643,15 @@ export default function App({ navigation }: { navigation?: any }) {
     const lastClick = lastClickTime[messageId] || 0;
     const timeDiff = now - lastClick;
     
-    console.log('👆 Double-click detected, messageId:', messageId, 'timeDiff:', timeDiff);
     setLastClickTime(prev => ({ ...prev, [messageId]: now }));
     
     // If clicked within 500ms, it's a double click
     if (timeDiff < 500 && timeDiff > 50) {
-      console.log('✅ Valid double-click, starting edit for:', messageId);
       // Start editing
       setEditingMessageId(messageId);
       setEditingText(messageContent);
       startEditing(messageId);
     } else {
-      console.log('❌ Not a valid double-click, timeDiff:', timeDiff);
     }
   };
 
@@ -952,7 +924,7 @@ export default function App({ navigation }: { navigation?: any }) {
                       style={styles.floatingEditInput}
                       value={editingText}
                       onChangeText={handleEditingTextChange}
-                      // onBlur={saveEdit} // Temporarily disabled
+                      onBlur={saveEdit}
                       onKeyPress={(e) => {
                         if (e.nativeEvent.key === 'Escape') {
                           cancelEdit();
@@ -1011,7 +983,7 @@ export default function App({ navigation }: { navigation?: any }) {
                         style={styles.inlineEditInput}
                         value={editingText}
                         onChangeText={handleEditingTextChange}
-                        // onBlur={saveEdit} // Temporarily disabled
+                        onBlur={saveEdit}
                         onKeyPress={(e) => {
                           if (e.nativeEvent.key === 'Escape') {
                             cancelEdit();
@@ -1493,21 +1465,32 @@ const styles = StyleSheet.create({
   
   // Inline editing styles
   inlineEditor: {
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#fafbfc',
     borderRadius: 8,
-    padding: 16,
-    borderWidth: 2,
-    borderColor: '#e2e8f0',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(226, 232, 240, 0.6)',
+    minHeight: 60,
   },
   inlineEditInput: {
     fontSize: 18,
-    lineHeight: 32,
+    lineHeight: 28,
     color: '#111827',
     letterSpacing: -0.2,
     fontWeight: '400',
-    minHeight: 60,
     textAlignVertical: 'top',
     backgroundColor: 'transparent',
+    borderWidth: 0,
+    padding: 0,
+    margin: 0,
+    ...Platform.select({
+      web: {
+        outline: 'none',
+        outlineStyle: 'none',
+        boxShadow: 'none',
+      }
+    }),
   },
   inlineCollaborators: {
     fontSize: 12,
@@ -1524,24 +1507,37 @@ const styles = StyleSheet.create({
   // Floating message inline editing
   inlineFloatingEditor: {
     backgroundColor: 'rgba(255, 255, 255, 0.95)',
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
     paddingVertical: 12,
     borderRadius: 20,
     borderBottomRightRadius: 4,
     maxWidth: '70%',
-    borderWidth: 2,
-    borderColor: '#3b82f6',
-    boxShadow: '0 2px 6px rgba(0, 0, 0, 0.1)',
-    elevation: 4,
+    minWidth: '20%',
+    borderWidth: 1,
+    borderColor: 'rgba(59, 130, 246, 0.3)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
   },
   floatingEditInput: {
     fontSize: 14,
     lineHeight: 19,
     color: '#374151',
     fontWeight: '400',
-    minHeight: 40,
     textAlignVertical: 'top',
     backgroundColor: 'transparent',
+    borderWidth: 0,
+    padding: 0,
+    margin: 0,
+    ...Platform.select({
+      web: {
+        outline: 'none',
+        outlineStyle: 'none',
+        boxShadow: 'none',
+      }
+    }),
   },
   inputContainer: {
     flexDirection: 'row',
