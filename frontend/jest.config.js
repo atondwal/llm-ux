@@ -6,6 +6,7 @@ module.exports = {
     'src/**/*.{ts,tsx}',
     '!src/**/*.d.ts',
     '!src/**/index.ts',
+    '!src/api-client/**/*',  // Exclude generated code
   ],
   coverageThreshold: {
     global: {
