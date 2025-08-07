@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, TextInput } from 'react-native';
 import { extractWikiConcepts } from '../utils/wikiTagParser';
 import WikiText from '../components/WikiText';
 
@@ -22,6 +22,8 @@ const WikiPage: React.FC<WikiPageProps> = ({ navigation, route }) => {
   const [relatedMessages, setRelatedMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [wikiContent, setWikiContent] = useState<string>('');
+  const [isEditing, setIsEditing] = useState(false);
+  const [editingContent, setEditingContent] = useState<string>('');
 
   useEffect(() => {
     loadRelatedMessages();
@@ -31,25 +33,37 @@ const WikiPage: React.FC<WikiPageProps> = ({ navigation, route }) => {
   const loadRelatedMessages = async () => {
     try {
       setLoading(true);
+      console.log('🔍 Loading related messages for concept:', concept);
+      
       // Fetch all conversations and their messages
       const conversationsResponse = await fetch(`${API_URL}/v1/conversations`);
       const conversationsData = await conversationsResponse.json();
+      console.log('📝 Conversations fetched:', conversationsData);
       
       const allMessages: Message[] = [];
       
       // Get messages from all conversations
       for (const conversation of conversationsData.data || []) {
+        console.log('📨 Fetching messages for conversation:', conversation.id);
         const messagesResponse = await fetch(`${API_URL}/v1/conversations/${conversation.id}/messages`);
         const messagesData = await messagesResponse.json();
+        console.log(`📨 Messages for ${conversation.id}:`, messagesData);
         allMessages.push(...(messagesData.data || []));
       }
+      
+      console.log('📨 Total messages found:', allMessages.length);
       
       // Filter messages that contain this concept
       const filtered = allMessages.filter(message => {
         const concepts = extractWikiConcepts(message.content);
-        return concepts.includes(concept);
+        const hasThisConcept = concepts.includes(concept);
+        if (hasThisConcept) {
+          console.log('✅ Message contains concept:', { messageId: message.id, content: message.content, concepts });
+        }
+        return hasThisConcept;
       });
       
+      console.log('🎯 Filtered messages for concept "' + concept + '":', filtered);
       setRelatedMessages(filtered);
     } catch (error) {
       console.error('Failed to load related messages:', error);
@@ -66,8 +80,20 @@ const WikiPage: React.FC<WikiPageProps> = ({ navigation, route }) => {
   };
 
   const handleEditWiki = () => {
-    // TODO: Open wiki editing interface
-    console.log('Edit wiki content for:', concept);
+    setEditingContent(wikiContent);
+    setIsEditing(true);
+  };
+
+  const handleSaveWiki = () => {
+    setWikiContent(editingContent);
+    setIsEditing(false);
+    // TODO: Save to backend when wiki content persistence is added
+    console.log('Saved wiki content for:', concept, editingContent);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingContent('');
+    setIsEditing(false);
   };
 
   const handleWikiTagPress = (taggedConcept: string) => {
@@ -92,16 +118,42 @@ const WikiPage: React.FC<WikiPageProps> = ({ navigation, route }) => {
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>About {concept}</Text>
-          <TouchableOpacity 
-            style={styles.editButton}
-            onPress={handleEditWiki}
-          >
-            <Text style={styles.editButtonText}>Edit</Text>
-          </TouchableOpacity>
+          {!isEditing ? (
+            <TouchableOpacity 
+              style={styles.editButton}
+              onPress={handleEditWiki}
+            >
+              <Text style={styles.editButtonText}>Edit</Text>
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.editButtonGroup}>
+              <TouchableOpacity 
+                style={[styles.editButton, styles.cancelButton]}
+                onPress={handleCancelEdit}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.editButton, styles.saveButton]}
+                onPress={handleSaveWiki}
+              >
+                <Text style={styles.editButtonText}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
         
         <View style={styles.wikiContent}>
-          {wikiContent ? (
+          {isEditing ? (
+            <TextInput
+              style={styles.editingTextArea}
+              value={editingContent}
+              onChangeText={setEditingContent}
+              placeholder={`Write about ${concept}...`}
+              multiline
+              autoFocus
+            />
+          ) : wikiContent ? (
             <WikiText 
               text={wikiContent}
               onWikiTagPress={handleWikiTagPress}
@@ -268,6 +320,32 @@ const styles = StyleSheet.create({
     color: '#007AFF',
     textDecorationLine: 'underline',
     fontWeight: '500',
+  },
+  editButtonGroup: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  cancelButton: {
+    backgroundColor: '#f0f0f0',
+  },
+  cancelButtonText: {
+    color: '#666',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  saveButton: {
+    backgroundColor: '#007AFF',
+  },
+  editingTextArea: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 12,
+    minHeight: 120,
+    fontSize: 16,
+    lineHeight: 24,
+    color: '#333',
+    textAlignVertical: 'top',
   },
 });
 
